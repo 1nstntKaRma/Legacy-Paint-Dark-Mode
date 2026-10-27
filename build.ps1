@@ -66,7 +66,7 @@ function Read-Choice([string[]]$lines, [int]$defaultIndex = 0) {
 }
 
 function Test-Interactive {
-    try { return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and $Host.Name -eq 'ConsoleHost' -and ([Environment]::GetCommandLineArgs() -notcontains '-NonInteractive') } catch { return $false }
+    try { return [Environment]::UserInteractive -and ($Host.Name -in @('ConsoleHost', 'Windows PowerShell ISE Host')) -and ([Environment]::GetCommandLineArgs() -notcontains '-NonInteractive') } catch { return $false }
 }
 
 function Start-ExitCountdown([int]$seconds = 3, [string]$color = 'Gray') {

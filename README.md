@@ -20,10 +20,10 @@ A faithful, fast dark-mode recreation of classic Windows Paint (`mspaint.exe`) f
 
 ### Option 1 — PowerShell One-Liner *(Recommended)*
 
-Paste and run in PowerShell to clone into a temporary folder, build, launch the setup prompt, and automatically clean up the temporary source clone when finished:
+Paste and run in PowerShell (works on any stock Windows 10/11 PC — no `git` required) to download into a temporary folder, build, launch the setup prompt, and automatically clean up the temporary folder when finished:
 
 ```powershell
-$d="$env:TEMP\PaintDark"; Remove-Item $d -Recurse -Force -EA 0; try { git clone https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode.git $d; powershell -ExecutionPolicy Bypass -File "$d\build.ps1" } finally { Remove-Item $d -Recurse -Force -EA 0 }; exit
+$d="$env:TEMP\PaintDark"; $z="$d.zip"; Remove-Item $d,$z -Recurse -Force -EA 0; try { [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; Invoke-WebRequest https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/archive/refs/heads/main.zip -OutFile $z -UseBasicParsing; Expand-Archive $z $d -Force; powershell -ExecutionPolicy Bypass -File "$d\Legacy-Paint-Dark-Mode-main\build.ps1" } finally { Remove-Item $d,$z -Recurse -Force -EA 0 }
 ```
 
 If no local `.NET SDK` compiler is detected on a stock Windows 10 system, `build.ps1` prompts:
