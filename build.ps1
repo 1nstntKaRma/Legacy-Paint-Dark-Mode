@@ -1,18 +1,20 @@
-# Builds Paint Dark Mode -> bin\PaintDark.exe, then offers Explorer integration.
+# Builds Legacy Paint - Dark Mode -> bin\PaintDark.exe, then offers Explorer integration.
 #
 # Uses the Roslyn compiler shipped with any installed .NET SDK and targets .NET Framework 4.8,
 # which is part of every Windows 10 / 11 installation (nothing extra to install for users).
 #
-#   .\build.ps1                     build, then ask about Explorer integration
-#   .\build.ps1 -Shell Yes          build, then "Edit" -> Paint Dark Mode, hide "Edit with Paint 3D"
-#   .\build.ps1 -Shell Revert       build, then "Edit" -> original Paint, hide "Edit with Paint 3D"
-#   .\build.ps1 -Shell No           build only
-#   .\build.ps1 -NoBuild -Shell ... only change the Explorer integration
-#   .\build.ps1 -NoBuild -Shell Clean   remove every change this script ever made (factory state)
+#   .\build.ps1                         build (if src\ is present), then ask about Explorer integration
+#   .\build.ps1 -Shell Apply            build, install to %LOCALAPPDATA%\PaintDark, and register Right-click -> Edit
+#   .\build.ps1 -Shell Revert           restore the original Windows Paint for Right-click -> Edit
+#   .\build.ps1 -Shell Abort            build only (exit without changing Explorer integration)
+#   .\build.ps1 -NoBuild -Shell ...     only change the Explorer integration
+#   .\build.ps1 -NoBuild -Shell Clean   restore Windows defaults and remove per-user installation
+#   .\build.ps1 -Launch                 launch PaintDark.exe after building
 param(
     [switch]$Debug,
-    [ValidateSet('Ask', 'Yes', 'Revert', 'No', 'Clean')][string]$Shell = 'Ask',
-    [switch]$NoBuild
+    [ValidateSet('Ask', 'Apply', 'Apply Dark Mode', 'Yes', 'Revert', 'Abort', 'Cancel', 'No', 'Clean')][string]$Shell = 'Ask',
+    [switch]$NoBuild,
+    [switch]$Launch
 )
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
@@ -21,12 +23,99 @@ $bin = Join-Path $root 'bin'
 $obj = Join-Path $root 'obj'
 $exe = Join-Path $bin 'PaintDark.exe'
 
+$Marker = 'PaintDarkMode'
+$InstallDir = Join-Path $env:LOCALAPPDATA 'PaintDark'
+$InstalledExe = Join-Path $InstallDir 'PaintDark.exe'
+$InstallMarker = Join-Path $InstallDir 'installed-by-build.ps1.txt'
+
+# Strip Mark-of-the-Web (Zone.Identifier) from extracted release files so Windows SmartScreen
+# does not block execution on standard PCs.
+try { Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
+
+# Normalize $Shell aliases
+switch ($Shell) {
+    'Yes'             { $Shell = 'Apply' }
+    'Apply Dark Mode' { $Shell = 'Apply' }
+    'No'              { $Shell = 'Abort' }
+    'Cancel'          { $Shell = 'Abort' }
+}
+
+function Test-Interactive {
+    try { return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and $Host.Name -eq 'ConsoleHost' -and ([Environment]::GetCommandLineArgs() -notcontains '-NonInteractive') } catch { return $false }
+}
+
+function Start-ExitCountdown([int]$seconds = 3, [string]$color = 'Gray') {
+    if (-not (Test-Interactive)) { return }
+    for ($i = $seconds; $i -ge 1; $i--) {
+        $s = if ($i -eq 1) { '' } else { 's' }
+        Write-Host "`rClosing in $i second$s...   " -ForegroundColor $color -NoNewline
+        Start-Sleep -Seconds 1
+    }
+    Write-Host ''
+}
+
+function Exit-Session([int]$code = 0) {
+    if (Test-Interactive) {
+        try {
+            $self = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue
+            if ($self -and $self.ParentProcessId) {
+                $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($self.ParentProcessId)" -ErrorAction SilentlyContinue
+                if ($parent -and $parent.Name -match '^(powershell|pwsh|cmd)(\.exe)?$') {
+                    $parentPid = [int]$parent.ProcessId
+                    $tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\')
+                    $cleanCmd = ""
+                    if ($root.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $escapedRoot = $root.Replace("'", "''")
+                        $cleanCmd = "Remove-Item -LiteralPath '$escapedRoot' -Recurse -Force -ErrorAction SilentlyContinue; "
+                    }
+                    $killScript = "Start-Sleep -Milliseconds 250; $cleanCmd Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue"
+                    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-Command', $killScript) -WorkingDirectory $tempRoot -WindowStyle Hidden | Out-Null
+                }
+            }
+        } catch {}
+        try { $Host.SetShouldExit($code) } catch {}
+        [Environment]::Exit($code)
+    }
+    exit $code
+}
+
+function Test-HasSource {
+    if (-not (Test-Path -LiteralPath $src)) { return $false }
+    $csCount = @(Get-ChildItem -LiteralPath $src -Filter *.cs -Recurse -ErrorAction SilentlyContinue).Count
+    return ($csCount -gt 0)
+}
+
+function Show-BuildSummary {
+    $size = [math]::Round((Get-Item -LiteralPath $exe).Length / 1KB)
+    Write-Host 'Legacy Paint - Dark Mode Build path:' -ForegroundColor Green
+    Write-Host "`"$bin`"" -ForegroundColor Green
+    Write-Host "$(Split-Path $exe -Leaf) ($size KB)" -ForegroundColor Green
+    if ((Test-Path $InstallMarker) -and (Test-Path $InstalledExe)) {
+        $same = (Get-FileHash $exe).Hash -eq (Get-FileHash $InstalledExe).Hash
+        if (-not $same) { Write-Host "  The installed copy in $InstallDir is older. Choose Apply Dark Mode (or -Shell Apply) to update it." -ForegroundColor Yellow }
+    }
+}
+
 # ======================================================================================= build
 function Invoke-Build {
+    if (-not (Test-HasSource)) {
+        if (Test-Path -LiteralPath $exe) {
+            Show-BuildSummary
+            return
+        }
+        throw "No source files found in '$src' and pre-built binary was not found in '$bin'. Extract the entire zip archive before running build.ps1."
+    }
+
     New-Item -ItemType Directory -Force $bin, $obj | Out-Null
     $csc = Get-ChildItem "$env:ProgramFiles\dotnet\sdk\*\Roslyn\bincore\csc.dll" -ErrorAction SilentlyContinue |
         Sort-Object { [version]($_.FullName -replace '.*\\sdk\\([\d\.]+)[^\\]*\\.*', '$1') } -Descending | Select-Object -First 1
-    if (-not $csc) { throw 'No .NET SDK found (needed only to build).' }
+    if (-not $csc) {
+        if (Test-Path -LiteralPath $exe) {
+            Show-BuildSummary
+            return
+        }
+        throw 'No .NET SDK found (needed only to build from source; download the pre-built Release zip if you do not have the .NET SDK installed).'
+    }
 
     $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
     if (-not (Test-Path $fw)) { $fw = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319" }
@@ -38,7 +127,8 @@ function Invoke-Build {
     if ($Debug) { $common += @('-debug:portable', '-optimize-', '-define:DEBUG') } else { $common += @('-optimize+', '-debug-') }
 
     function Compile($out, $extra) {
-        & dotnet $csc.FullName @common @extra "-out:$out" @refs @files
+        $argv = @($common) + @($extra | Where-Object { $_ }) + @("-out:$out") + @($refs) + @($files)
+        & dotnet $csc.FullName @argv
         if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)" }
     }
 
@@ -46,27 +136,22 @@ function Invoke-Build {
     if ($running) { throw "Paint Dark Mode is running from $exe. Close it and build again." }
 
     $ico = Join-Path $obj 'app.ico'
-    if (-not (Test-Path $ico)) {
-        # first pass without an icon, then let the app draw its own icon
-        $tmp = Join-Path $obj 'PaintDark.noicon.exe'
-        Compile $tmp @()
-        & $tmp --export-icon $ico | Out-Null
-        Start-Sleep -Milliseconds 300
-    }
+    $tmp = Join-Path $obj 'PaintDark.noicon.exe'
+    Compile $tmp @()
+    & $tmp --export-icon $ico | Out-Null
+    Start-Sleep -Milliseconds 200
+    if (-not (Test-Path $ico)) { throw 'Icon export failed.' }
     Compile $exe @("-win32icon:$ico")
-    $size = [math]::Round((Get-Item $exe).Length / 1KB)
-    Write-Host "Built $exe ($size KB) with $($csc.Directory.Parent.Parent.Name)" -ForegroundColor Green
+
+    Show-BuildSummary
 }
 
 # ======================================================================================= Explorer integration
-# Everything is written per user (HKCU\Software\Classes), which Windows merges over the machine-wide
-# registrations, so no administrator rights are needed and nothing system-wide is deleted.
-# Every key we create carries a 'PaintDarkMode' marker so Revert / Clean only touch our own changes.
-# (the .NET registry API is used directly: PowerShell's provider is very slow on the merged HKCR view)
+# Everything is written per user (HKCU\Software\Classes and %LOCALAPPDATA%\PaintDark), which Windows merges
+# over machine-wide registrations, so no administrator rights are needed and nothing system-wide is modified.
 $HKCU = [Microsoft.Win32.Registry]::CurrentUser
 $HKCR = [Microsoft.Win32.Registry]::ClassesRoot
 $ClassesRoot = 'Software\Classes'
-$Marker = 'PaintDarkMode'
 $EditVerbs = @('SystemFileAssociations\image\shell\edit', 'Paint.Picture\shell\edit', 'PBrush\shell\edit')
 
 function U($path) { "$ClassesRoot\$path" }
@@ -95,7 +180,6 @@ function Set-UserValue($path, $name, $value) {
 }
 
 function New-OwnedKey($path) {
-    # creates the key chain, marking only the parts that are new so they can be removed later
     $cur = $ClassesRoot
     foreach ($p in $path -split '\\') {
         $cur = "$cur\$p"
@@ -106,7 +190,6 @@ function New-OwnedKey($path) {
 }
 
 function Remove-OwnedKey($path) {
-    # removes our marked keys bottom-up, keeping anything the user or other apps own
     $parts = $path -split '\\'
     for ($i = $parts.Count; $i -ge 1; $i--) {
         $rel = U (($parts[0..($i - 1)]) -join '\')
@@ -118,14 +201,13 @@ function Remove-OwnedKey($path) {
         $subs = $k.SubKeyCount
         $k.Close()
         if (-not $mine) { break }
-        if ($i -eq $parts.Count) { $HKCU.DeleteSubKeyTree($rel); continue }    # the verb key itself, with its command
+        if ($i -eq $parts.Count) { $HKCU.DeleteSubKeyTree($rel); continue }
         if ($subs -eq 0 -and $others -eq 0 -and -not $hasDefault) { $HKCU.DeleteSubKey($rel) } else { break }
     }
 }
 
 function Set-EditCommand($verbPath, $command, $tag) {
     if (($null -ne (Get-UserValue "$verbPath\command" '')) -and ($null -eq (Get-UserValue $verbPath $Marker))) {
-        # a per-user override that is not ours: remember it so Revert can put it back
         Set-UserValue $verbPath "$Marker.Previous" (Get-UserValue "$verbPath\command" '')
     }
     New-OwnedKey "$verbPath\command"
@@ -172,7 +254,6 @@ function Remove-EditOverrides {
         if ($null -eq (Get-UserValue $v $Marker)) { continue }
         $prev = Get-UserValue $v "$Marker.Previous"
         if ($null -ne $prev) {
-            # put the user's own override back exactly as it was
             Set-UserValue "$v\command" '' $prev
             $k = $HKCU.OpenSubKey((U $v), $true)
             try { $k.DeleteValue("$Marker.Previous", $false); $k.DeleteValue($Marker, $false) } finally { $k.Close() }
@@ -191,104 +272,146 @@ function Get-CommandExe($command) {
 function Find-LegacyPaint {
     $sys = Join-Path $env:SystemRoot 'System32\mspaint.exe'
     if (Test-Path $sys) { return $sys }
-    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\mspaint.exe'   # Windows 11: Paint app alias
+    $alias = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps\mspaint.exe'
     if (Test-Path $alias) { return $alias }
     return $null
 }
 
+function Install-Files {
+    if (-not (Test-Path -LiteralPath $exe)) { throw "Build first: $exe was not found." }
+    $running = Get-Process PaintDark -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -ieq $InstalledExe }
+    if ($running) { throw "Legacy Paint Dark Mode is running from $InstallDir. Close it and try again." }
+    New-Item -ItemType Directory -Force $InstallDir | Out-Null
+    try { Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue } catch {}
+    Copy-Item -LiteralPath $exe -Destination $InstalledExe -Force
+    try { Unblock-File -LiteralPath $InstalledExe -ErrorAction SilentlyContinue } catch {}
+    Set-Content -Path $InstallMarker -Encoding ASCII -Value @(
+        "Installed by $PSCommandPath ($Marker) on $(Get-Date -Format s).",
+        'Remove with: build.ps1 -NoBuild -Shell Revert (or -Shell Clean).')
+    Write-Host "  Installed to $InstalledExe"
+}
+
+function Remove-Files {
+    if (-not (Test-Path -LiteralPath $InstallDir)) { return }
+    if (-not (Test-Path -LiteralPath $InstallMarker)) { return }
+    $running = Get-Process PaintDark -ErrorAction SilentlyContinue | Where-Object { $_.Path -and $_.Path -ieq $InstalledExe }
+    if ($running) { throw "Legacy Paint Dark Mode is running from $InstallDir. Close it and try again." }
+    Remove-Item -LiteralPath $InstalledExe -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $InstallMarker -Force -ErrorAction SilentlyContinue
+    $remaining = @(Get-ChildItem -LiteralPath $InstallDir -Force -ErrorAction SilentlyContinue).Count
+    if ($remaining -eq 0) {
+        Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Removed $InstallDir"
+    } else {
+        Write-Host "  Removed $InstalledExe (kept user settings in $InstallDir)"
+    }
+}
+
 function Install-ShellIntegration {
-    if (-not (Test-Path $exe)) { throw "Build first: $exe was not found." }
-    $cmd = "`"$exe`" `"%1`""
-    Write-Host "Explorer integration -> Paint Dark Mode" -ForegroundColor Cyan
+    Write-Host 'Explorer integration -> Legacy Paint Dark Mode' -ForegroundColor Cyan
+    Install-Files
+    $cmd = "`"$InstalledExe`" `"%1`""
     Remove-EditOverrides
     foreach ($v in $EditVerbs) {
-        # Paint's own ProgIDs only get an override where they exist on this system
         if ($v -like 'SystemFileAssociations*' -or (Test-MergedKey ($v -replace '\\shell\\edit$', ''))) { Set-EditCommand $v $cmd 'darkpaint' }
     }
-    Write-Host "  'Edit' on pictures now opens $exe"
+    Write-Host "  'Edit' on pictures now opens $InstalledExe"
     Hide-Paint3D
+    Update-Explorer
+    Write-Host ''
+    Write-Host '[OK] Operation completed successfully: Legacy Paint Dark Mode is active (Right-click > Edit)' -ForegroundColor Green
 }
 
 function Revert-ShellIntegration {
-    Write-Host "Explorer integration -> original Paint" -ForegroundColor Cyan
+    Write-Host 'Explorer integration -> the original Windows Paint' -ForegroundColor Cyan
     Remove-EditOverrides
+    Remove-Files
     $c = Get-MergedCommand 'SystemFileAssociations\image\shell\edit'
     $target = Get-CommandExe $c
     if ($c -and $target -and (Test-Path $target)) { Write-Host "  'Edit' on pictures opens the original Paint again ($c)" }
     else {
-        # this Windows has no built-in "Edit" verb (e.g. some Windows 11 builds): add it back for Paint
         $paint = Find-LegacyPaint
         if ($paint) {
             Set-EditCommand 'SystemFileAssociations\image\shell\edit' "`"$paint`" `"%1`"" 'restored'
-            Write-Host "  'Edit' added back for pictures -> $paint"
+            Write-Host "  'Edit' restored for pictures -> $paint"
         }
         else { Write-Host "  Paint (mspaint.exe) was not found on this system, so 'Edit' was left out." -ForegroundColor Yellow }
     }
     Hide-Paint3D
+    Update-Explorer
+    Write-Host ''
+    Write-Host '[OK] Operation completed successfully: Reverted to the original Windows Paint.' -ForegroundColor DarkYellow
 }
 
 function Clear-ShellIntegration {
-    Write-Host "Explorer integration -> removing every change made by this script" -ForegroundColor Cyan
+    Write-Host 'Explorer integration -> removing all changes from this script' -ForegroundColor Cyan
     Remove-EditOverrides
     Show-Paint3D
-    Write-Host "  Done. Explorer uses the system defaults again."
+    if ((Test-Path -LiteralPath $InstallDir) -and (Test-Path -LiteralPath $InstallMarker)) {
+        Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  Removed $InstallDir"
+    }
+    Update-Explorer
+    Write-Host ''
+    Write-Host '[OK] Operation completed successfully: System restored to Windows defaults.' -ForegroundColor DarkYellow
 }
 
 function Update-Explorer {
-    # tell Explorer that file associations changed, so the context menu refreshes immediately
     if (-not ('PaintDarkBuild.Shell' -as [type])) {
         Add-Type -Namespace 'PaintDarkBuild' -Name 'Shell' -MemberDefinition '[DllImport("shell32.dll")] public static extern void SHChangeNotify(int e, uint f, System.IntPtr a, System.IntPtr b);'
     }
     [PaintDarkBuild.Shell]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
 }
 
-function Test-Interactive {
-    try { return [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and $Host.Name -eq 'ConsoleHost' } catch { return $false }
-}
-
-function Test-OwnConsole {
-    # true when this script got its own console window (e.g. "Run with PowerShell"), so we pause before it closes
-    try {
-        if (-not ('PaintDarkBuild.Console' -as [type])) {
-            Add-Type -Namespace 'PaintDarkBuild' -Name 'Console' -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint GetConsoleProcessList(uint[] list, uint count);'
-        }
-        $list = New-Object 'uint[]' 8
-        return [PaintDarkBuild.Console]::GetConsoleProcessList($list, 8) -le 1
-    }
-    catch { return $false }
-}
-
 # ======================================================================================= main
-$ownConsole = Test-OwnConsole
 $asked = $false
 try {
-    if (-not $NoBuild) { Invoke-Build }
+    if (-not $NoBuild) {
+        if ((Test-HasSource) -or $Shell -ne 'Revert') {
+            Invoke-Build
+        }
+    }
+
+    if ($Launch -and (Test-Path -LiteralPath $exe)) {
+        Start-Process -FilePath $exe
+    }
 
     if ($Shell -eq 'Ask') {
         if (Test-Interactive) {
             $choices = [System.Management.Automation.Host.ChoiceDescription[]]@(
-                (New-Object System.Management.Automation.Host.ChoiceDescription '&Yes', 'Right-click > Edit opens Paint Dark Mode, and "Edit with Paint 3D" is removed.'),
-                (New-Object System.Management.Automation.Host.ChoiceDescription '&Revert', 'Right-click > Edit opens the original Paint again, and "Edit with Paint 3D" is removed.'),
-                (New-Object System.Management.Automation.Host.ChoiceDescription '&No', 'Leave the Explorer context menu unchanged.'))
-            $msg = "`n  Yes    - 'Edit' opens Paint Dark Mode, 'Edit with Paint 3D' is removed`n" +
-                   "  Revert - 'Edit' opens the original Paint again, 'Edit with Paint 3D' is removed`n" +
-                   "  No     - leave the context menu unchanged`n"
-            $pick = $Host.UI.PromptForChoice('Explorer right-click menu for pictures', $msg, $choices, 2)
+                (New-Object System.Management.Automation.Host.ChoiceDescription '&Apply Dark Mode', 'Right-click "Edit" on image files will now use Legacy Paint Dark Mode.'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription '&Revert', 'Restore the original Windows Paint.'),
+                (New-Object System.Management.Automation.Host.ChoiceDescription 'A&bort', 'Exit without changing anything.'))
+            $msg = "`n  Apply Dark Mode - Right-click `"Edit`" on image files will now use Legacy Paint Dark Mode.`n" +
+                   "  Revert          - Restore the original Windows Paint`n" +
+                   "  Abort           - Exit without changing anything`n"
+            $pick = $Host.UI.PromptForChoice('Legacy Paint - Dark Mode', $msg, $choices, 2)
             $asked = $true
-            $Shell = @('Yes', 'Revert', 'No')[$pick]
+            $Shell = @('Apply', 'Revert', 'Abort')[$pick]
         }
-        else { $Shell = 'No' }
+        else { $Shell = 'Abort' }
+    }
+
+    if ($Shell -eq 'Abort') {
+        if ($asked -or $NoBuild) {
+            Write-Host ''
+            Write-Host '[X] Operation aborted: No system changes were made.' -ForegroundColor Red
+        }
+        Exit-Session 0
     }
 
     switch ($Shell) {
-        'Yes' { Install-ShellIntegration; Update-Explorer }
-        'Revert' { Revert-ShellIntegration; Update-Explorer }
-        'Clean' { Clear-ShellIntegration; Update-Explorer }
+        'Apply'  { Install-ShellIntegration }
+        'Revert' { Revert-ShellIntegration }
+        'Clean'  { Clear-ShellIntegration }
     }
+
+    $countdownColor = if ($Shell -eq 'Apply') { 'Green' } else { 'DarkYellow' }
+    Start-ExitCountdown -seconds 3 -color $countdownColor
+    Exit-Session 0
 }
 catch {
     Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
-    if ($ownConsole -and (Test-Interactive) -and $Shell -eq 'Ask') { Read-Host 'Press Enter to close' | Out-Null }
+    if (Test-Interactive) { Read-Host "`nPress Enter to close" | Out-Null }
     exit 1
 }
-if ($ownConsole -and $asked) { Read-Host "`nDone. Press Enter to close" | Out-Null }

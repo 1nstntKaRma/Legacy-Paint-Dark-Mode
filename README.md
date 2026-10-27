@@ -1,115 +1,83 @@
-# Legacy Paint - Dark Mode
+# Legacy Paint — Dark Mode
 
-> **A full dark-mode recreation of classic Windows Paint (`mspaint`) for Windows 10/11: same features, same layout, zero white.**
-
-![Version](https://img.shields.io/badge/version-v1.3-blue)
-![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6)
-![.NET Framework](https://img.shields.io/badge/.NET%20Framework-4.8%20(built--in)-512BD4)
+![Version](https://img.shields.io/badge/version-v1.4-blue)
+![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
+![Runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512BD4)
+![Language](https://img.shields.io/badge/C%23%205-WinForms%20%2B%20GDI-239120)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-**Legacy Paint – Dark Mode** is a standalone Windows application that looks and works like the classic ribbon Paint (`mspaint.exe`) from Windows 7 and Windows 10, but is **100% dark**—including the title bar, Quick Access Toolbar, ribbon, galleries, menus, modal dialogs, canvas workspace, and status bar.
+> **🎨🖌️ Windows 10 - Legacy Paint Dark Mode ⚡ Full replacement.**
 
-It is a single **~420 KB `.exe`** with nothing extra to install, because it runs on **.NET Framework 4.8**, which is built into every Windows 10 and Windows 11 installation.
+<p align="center">
+  <picture><img src="screenshots/paint-preview.webp" width="880" alt="Legacy Paint Dark Mode Preview"></picture>
+</p>
 
-![Legacy Paint Dark Mode - Ribbon and Dark Canvas](screenshots/dark-canvas-and-ribbon.png)
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="screenshots/brushes-and-shapes-gallery.png" width="420" alt="Brushes Gallery">
-    </td>
-    <td align="center" width="50%">
-      <img src="screenshots/dialogs-and-tools.png" width="420" alt="Resize and Skew Dialog">
-    </td>
-  </tr>
-</table>
+A faithful, fast dark-mode recreation of classic Windows Paint (`mspaint.exe`) for Windows 10 and Windows 11. Every ribbon tab, tool gallery, modal dialog, ruler, status bar, and workspace surface is rendered in native dark chrome — with an optional dark starting canvas toggleable directly from the **View** tab.
 
 ---
 
-## Use Case
+## Quick Start
 
-Built for anyone who loves the fast, simple classic Windows Paint workflow—for quick edits, screenshots, annotations, and pixel work—but hates its blinding white interface, which Microsoft never gave a dark mode in Windows 10.
+### Option 1 — Download Pre-Built Release *(Recommended)*
 
-- **Zero white flash:** Dark custom window frame, ribbon, popups, dialogs, and an optional **Dark canvas** mode where new pictures start black (with white selected as Color 1).
-- **Optional Explorer integration:** Can replace `Right-click -> Edit` on pictures (and hide *"Edit with Paint 3D"*), while **Revert** puts the original Windows Paint back in one click. Everything is written per-user (`HKCU\Software\Classes`), requiring **no administrator privileges**.
+1. Download **`PaintDark-v1.4.zip`** from **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)** and extract it (or download **`PaintDark.exe`** to run standalone with zero setup).
+2. Double-click **`Activate Paint Dark Mode.cmd`** (or run `build.ps1` and select **Apply Dark Mode**) to set Legacy Paint Dark Mode as your default editor for `Right-click -> Edit` on image files in File Explorer (while hiding *"Edit with Paint 3D"*).
+3. To restore the original Windows Paint at any time, double-click **`Revert to Windows Paint.cmd`** (or select **Revert** in `build.ps1`).
 
----
+### Option 2 — Build from Source
 
-## Download & Quick Start
-
-### Option 1: Download Pre-Built Executable (No SDK Required)
-
-1. Go to **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)**:
-   - Download **`PaintDark.exe`** (~420 KB) to run it immediately as a standalone portable app (double-click it, drag-and-drop an image onto it, or pass a file path on the command line).
-   - Or download **`PaintDark-v1.3.zip`** (which includes `bin\PaintDark.exe` and `build.ps1`) and run `.\build.ps1 -NoBuild -Shell Yes` in PowerShell if you also want `Right-click -> Edit` on pictures in Explorer to open Legacy Paint – Dark Mode.
-
-> **Note on Windows SmartScreen / Unsigned Binaries:** `PaintDark.exe` is not signed with a commercial Authenticode certificate, so Windows SmartScreen or some antivirus tools may show an *"Windows protected your PC"* prompt on first download (*More info* -> *Run anyway*). If you prefer not to run a downloaded executable, you can compile it from source in ~2 seconds using Option 2 below.
-
-### Option 2: Build from Source
+Requires Windows 10/11 (`csc.exe` from the built-in .NET Framework 4.8 — no Visual Studio or extra SDK download required). Run this single-line command in PowerShell to clone into a temporary folder, build, launch the setup prompt, and automatically clean up the temporary source clone when finished:
 
 ```powershell
-git clone https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode.git
-cd Legacy-Paint-Dark-Mode
-.\build.ps1
+$d="$env:TEMP\PaintDark"; Remove-Item $d -Recurse -Force -EA 0; try { git clone https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode.git $d; powershell -ExecutionPolicy Bypass -File "$d\build.ps1" } finally { Remove-Item $d -Recurse -Force -EA 0 }; exit
 ```
 
-Building requires any installed **.NET SDK** (used only for its C# compiler `csc.dll`; the compiled executable targets `.NET Framework 4.8`).
+After compiling `bin\PaintDark.exe`, the script prompts:
 
-> **Note for automated / non-interactive builds:** Running `.\build.ps1` interactively prompts after compiling to ask about Explorer right-click integration (`Yes` / `Revert` / `No`). To build without any prompt, run:
-> ```powershell
-> .\build.ps1 -Shell No
-> ```
+| Choice | Action |
+|---|---|
+| **`[A] Apply Dark Mode`** | Copies `PaintDark.exe` to `%LOCALAPPDATA%\PaintDark` and registers `Right-click -> Edit` on image files (`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`) in `HKCU\Software\Classes`, plus hides *"Edit with Paint 3D"* |
+| **`[R] Revert`** | Restores the original Windows Paint (`mspaint.exe`) for `Right-click -> Edit` and removes the per-user install copy |
+| **`[B] Abort`** | Exits without changing any registry settings (`bin\PaintDark.exe` stays ready to run standalone) |
 
----
+#### Non-Interactive Flags
 
-## Features
-
-- **Window & Chrome:** Dark custom caption with customizable Quick Access Toolbar (can sit above or below the Ribbon), native window snapping, Windows 11 snap layouts, and per-monitor DPI scaling (`PerMonitorV2`).
-- **Ribbon:** *Home* / *View* / contextual *Text Tools* / *Print preview* tabs, split buttons, dropdowns, galleries, original Paint tooltip wording, `Alt` / `F10` key tips, `Ctrl+F1` ribbon minimize, and responsive group collapsing when the window is narrow.
-- **File Menu:** *New*, *Open*, *Save*, *Save as* (PNG / JPEG / BMP / GIF / Other formats), *Print* / *Page setup* / *Print preview*, *From scanner or camera* (WIA), *Send in email* (MAPI), *Set as desktop background* (Fill / Tile / Center), *Properties*, *About*, *Exit*, plus *Recent pictures* with pinning.
-- **Tools:** Pencil, Fill bucket, **Text** (rich text via the same windowless RichEdit engine classic Paint uses, with per-selection font, size, Bold/Italic/Underline/Strikethrough, foreground/background colors, **full RTL / Hebrew**, and IME support), Eraser (right-click erases Color 1 only), Color picker (eyedropper), Magnifier.
-- **Brushes (all 9):** Brush, Calligraphy brush 1, Calligraphy brush 2, Airbrush, Oil brush, Crayon, Marker, Natural pencil, Watercolor brush.
-- **Shapes (all 23):** Line, Curve (two-bend), Oval, Rectangle, Rounded rectangle, Polygon, triangles, arrows, stars, callouts, Heart, and Lightning. Shapes remain live-editable after drawing (move, resize, recolor, adjust outline width) and support Solid, Crayon, Marker, Oil, Natural pencil, and Watercolor outlines and fills.
-- **Selection:** Rectangular and Free-form selection, *Select all*, *Invert selection*, *Delete*, and *Transparent selection*. Moving leaves Color 2 behind, `Ctrl+drag` copies, `Shift+drag` stamps a trail, arrow keys nudge by pixel, and handles stretch/resize the selection.
-- **Image Operations:** *Crop*, *Resize and Skew* (percentage or pixels, aspect ratio lock, horizontal/vertical skew in degrees), *Rotate / Flip* (90° right/left, 180°, vertical/horizontal flip), *Invert color*, and interactive canvas resize grips.
-- **View & Dark Canvas:** Zoom `12.5%`–`800%` (slider, buttons, `Ctrl+Mouse Wheel`), rulers, gridlines, status bar, *Thumbnail* window, *Full screen* (`F11`), and **Dark canvas** (new pictures start black with white as Color 1; toggle it off on the *View* tab anytime for a classic white canvas).
-- **File Formats:** Opens `BMP`, `JPEG`, `GIF`, `TIFF`, `PNG`, and `ICO` (plus `HEIC`, `WebP`, and `JXR` when the Windows codecs are installed). Saves `PNG`, `JPEG`, `BMP` (1/4/8/24-bit), `GIF`, and `TIFF` (preserving transparency in PNG and TIFF).
-- **Undo & Crash Recovery:** 50 levels of compressed, memory-capped undo/redo. Settings are saved in `%APPDATA%\PaintDark\settings.ini`, and if an unexpected error ever occurs, any unsaved picture is automatically written to `%APPDATA%\PaintDark\Recovered\`.
+```powershell
+.\build.ps1 -Shell Apply            # Build, install to %LOCALAPPDATA%\PaintDark, and register Right-click -> Edit
+.\build.ps1 -Shell Revert           # Restore original Windows Paint
+.\build.ps1 -Shell Abort            # Build only, skip registry changes
+.\build.ps1 -NoBuild -Shell Clean   # Full cleanup: restore Windows defaults and remove settings
+.\build.ps1 -Launch                 # Launch PaintDark.exe after building
+```
 
 ---
 
-## Explorer Right-Click Menu Integration
+## Highlights
 
-After building (or when called with `-NoBuild`), `build.ps1` offers to configure Windows Explorer's right-click menu for image files:
+- **100% Native Dark Chrome:** Custom-drawn dark title bar, Quick Access Toolbar, **File** backstage menu, **Home** and **View** ribbon tabs, dropdown galleries, scrollbars, rulers, status bar, and modal dialogs (**Resize and Skew**, **Image Properties**, **Edit Colors**, **Page Setup**).
+- **Dark or Light Starting Canvas:** New documents start on a black canvas (`#000000`) with white (`#FFFFFF`) as Color 1 by default — toggle **View -> Dark canvas** anytime to switch between black and classic white backgrounds.
+- **Complete Classic Toolset:**
+  - **9 Brushes:** Brush, Calligraphy 1 & 2, Airbrush, Oil, Crayon, Marker, Natural Pencil, and Watercolor with anti-aliased pressure/bristle rendering.
+  - **23 Live-Editable Shapes:** Lines, multi-point curves, polygons, rectangles, callouts, arrows, stars, heart, and lightning bolt — all resizable and style-adjustable until committed.
+  - **Rich Text Tool:** Contextual **Text** ribbon tab, live font/size preview, Opaque/Transparent background modes, and full bidirectional (RTL / Hebrew) + IME composition support.
+  - **Pixel-Precise Editing:** Rectangular & free-form selection with **Transparent selection**, **Crop**, **Resize and Skew** (percentage or pixels), **Rotate / Flip**, **Invert color**, and **1px Pixel Gridlines + Rulers** up to `800%` zoom.
+- **Fast & Lightweight:** Single ~420 KB native executable built on .NET Framework 4.8 with a 32-bpp ARGB `DIBSection` surface, integer mipmap zoom pyramid, and 50-step delta-compressed Undo/Redo history.
 
-| Choice | Command | `"Edit"` on pictures opens | `"Edit with Paint 3D"` |
+---
+
+## Keyboard Shortcuts
+
+| Shortcut | Action | Shortcut | Action |
 |---|---|---|---|
-| **Yes** | `.\build.ps1 -NoBuild -Shell Yes` | Legacy Paint – Dark Mode (`PaintDark.exe`) | Hidden |
-| **Revert** | `.\build.ps1 -NoBuild -Shell Revert` | Original Windows Paint (`mspaint.exe`) | Hidden |
-| **No** | `.\build.ps1 -NoBuild -Shell No` | Unchanged | Unchanged |
-| **Clean** | `.\build.ps1 -NoBuild -Shell Clean` | Restores all Windows factory defaults | Restored |
-
-All changes are written strictly to the current user's registry hive (`HKCU\Software\Classes`), which Windows merges over `HKLM\Software\Classes`. **No administrator rights are needed**, nothing system-wide is modified, and every key created by the script is tagged with a `PaintDarkMode` marker so `Revert` and `Clean` never touch settings owned by you or other apps.
-
-On Windows 11, classic context-menu verbs like *Edit* appear under *Show more options* (`Shift+F10`).
+| `Ctrl+N` / `Ctrl+O` / `Ctrl+S` | New / Open / Save | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo (up to 50 steps) |
+| `F12` | Save As | `Ctrl+A` / `Delete` | Select All / Delete Selection |
+| `Ctrl+W` | Resize and Skew | `Ctrl+Shift+X` | Crop to Selection |
+| `Ctrl+E` | Image Properties | `Ctrl+Shift+I` | Invert Colors |
+| `Ctrl+R` / `Ctrl+G` | Toggle Rulers / Gridlines | `Ctrl+PageUp` / `Ctrl+PageDown` | Zoom In / Zoom Out |
+| `F11` | Full Screen View | `Ctrl+ Plus` / `Ctrl+ Minus` | Step Tool / Line Width |
 
 ---
 
-## Compatibility
+## License
 
-- **Tested on:** Windows 10 (22H2, 64-bit).
-- **Also compatible with:** Windows 11 (64-bit), using the built-in `.NET Framework 4.8` runtime.
-
----
-
-## Testing Hook
-
-`PaintDark.exe --test-hook` accepts scripted commands over `WM_COPYDATA` for automated UI testing and off-screen `WM_PRINTCLIENT` screenshots without touching the physical mouse, keyboard, or window focus. The hook is completely disabled unless `--test-hook` is passed on the command line.
-
----
-
-## License & Disclaimer
-
-Licensed under the [MIT License](LICENSE).
-
-**Disclaimer:** This is an independent open-source project and is not affiliated with, endorsed by, or sponsored by Microsoft Corporation. *"Paint"*, *"mspaint"*, and *"Windows"* are registered trademarks of Microsoft Corporation. All icons, brushes, and UI rendering in this repository are original code, with no Microsoft binaries or assets copied.
+Released under the [MIT License](LICENSE).
