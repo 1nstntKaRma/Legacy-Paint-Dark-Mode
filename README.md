@@ -11,18 +11,18 @@
 
 It is a single **~420 KB `.exe`** with nothing extra to install, because it runs on **.NET Framework 4.8**, which is built into every Windows 10 and Windows 11 installation.
 
----
-
-## Screenshots
-
-### Dark Ribbon & Dark Canvas
 ![Legacy Paint Dark Mode - Ribbon and Dark Canvas](screenshots/dark-canvas-and-ribbon.png)
 
-### Classic Brush & Tool Galleries
-![Legacy Paint Dark Mode - Brushes Gallery](screenshots/brushes-and-shapes-gallery.png)
-
-### Fully Dark Dialogs (Resize and Skew)
-![Legacy Paint Dark Mode - Resize and Skew Dialog](screenshots/dialogs-and-tools.png)
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="screenshots/brushes-and-shapes-gallery.png" width="420" alt="Brushes Gallery">
+    </td>
+    <td align="center" width="50%">
+      <img src="screenshots/dialogs-and-tools.png" width="420" alt="Resize and Skew Dialog">
+    </td>
+  </tr>
+</table>
 
 ---
 
