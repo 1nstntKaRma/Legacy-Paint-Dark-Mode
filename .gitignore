@@ -1,0 +1,21 @@
+# Build outputs
+bin/
+obj/
+release/
+*.exe
+*.dll
+*.pdb
+
+# Runtime logs, profiles, and settings
+*.log
+errors.log
+startup.profile
+settings.ini
+Recovered/
+
+# IDE / OS files
+.vs/
+*.user
+*.suo
+Thumbs.db
+Desktop.ini
