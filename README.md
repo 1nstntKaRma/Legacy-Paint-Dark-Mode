@@ -18,37 +18,47 @@ A faithful, fast dark-mode recreation of classic Windows Paint (`mspaint.exe`) f
 
 ## Quick Start
 
-### Option 1 — Download Pre-Built Release *(Recommended)*
+### Option 1 — PowerShell One-Liner *(Recommended)*
 
-1. Download **`PaintDark-v1.4.zip`** from **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)** and extract it (or download **`PaintDark.exe`** to run standalone with zero setup).
-2. Double-click **`Activate Paint Dark Mode.cmd`** (or run `build.ps1` and select **Apply Dark Mode**) to set Legacy Paint Dark Mode as your default editor for `Right-click -> Edit` on image files in File Explorer (while hiding *"Edit with Paint 3D"*).
-3. To restore the original Windows Paint at any time, double-click **`Revert to Windows Paint.cmd`** (or select **Revert** in `build.ps1`).
-
-### Option 2 — Build from Source
-
-Requires Windows 10/11 (`csc.exe` from the built-in .NET Framework 4.8 — no Visual Studio or extra SDK download required). Run this single-line command in PowerShell to clone into a temporary folder, build, launch the setup prompt, and automatically clean up the temporary source clone when finished:
+Paste and run in PowerShell to clone into a temporary folder, build, launch the setup prompt, and automatically clean up the temporary source clone when finished:
 
 ```powershell
 $d="$env:TEMP\PaintDark"; Remove-Item $d -Recurse -Force -EA 0; try { git clone https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode.git $d; powershell -ExecutionPolicy Bypass -File "$d\build.ps1" } finally { Remove-Item $d -Recurse -Force -EA 0 }; exit
 ```
 
-After compiling `bin\PaintDark.exe`, the script prompts:
+If no local `.NET SDK` compiler is detected on a stock Windows 10 system, `build.ps1` prompts:
 
 | Choice | Action |
 |---|---|
-| **`[A] Apply Dark Mode`** | Copies `PaintDark.exe` to `%LOCALAPPDATA%\PaintDark` and registers `Right-click -> Edit` on image files (`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`) in `HKCU\Software\Classes`, plus hides *"Edit with Paint 3D"* |
-| **`[R] Revert`** | Restores the original Windows Paint (`mspaint.exe`) for `Right-click -> Edit` and removes the per-user install copy |
-| **`[B] Abort`** | Exits without changing any registry settings (`bin\PaintDark.exe` stays ready to run standalone) |
+| **`[1] Compile Locally`** | Downloads Microsoft's official Roslyn compiler (`~25 MB` in temp, with `winget` as fallback) and compiles from source (default). |
+| **`[2] Use Pre-built`** | Downloads the pre-built release executable directly from GitHub Releases. |
+| **`[3] Cancel`** | Exits without downloading or changing anything. |
+
+Once `bin\PaintDark.exe` is ready, the script prompts (`Choice:`):
+
+| Choice | Action |
+|---|---|
+| **`[1] Apply Dark Mode`** | Right-click *"Edit"* @ image files (`.png`, `.jpg`, `.bmp`, `.gif`, `.tif`, `.webp`, `.ico`) will use Paint - Dark Mode (`%LOCALAPPDATA%\PaintDark\PaintDark.exe`), and *"Edit with Paint 3D"* is hidden (default). |
+| **`[2] Revert`** | Restores the original Windows Paint (`mspaint.exe`) for `Right-click -> Edit` and removes the per-user install copy. |
+| **`[3] Cancel`** | Exits without changing anything (`bin\PaintDark.exe` stays ready to run standalone). |
 
 #### Non-Interactive Flags
 
 ```powershell
 .\build.ps1 -Shell Apply            # Build, install to %LOCALAPPDATA%\PaintDark, and register Right-click -> Edit
 .\build.ps1 -Shell Revert           # Restore original Windows Paint
-.\build.ps1 -Shell Abort            # Build only, skip registry changes
+.\build.ps1 -Shell Cancel           # Build only, skip registry changes
 .\build.ps1 -NoBuild -Shell Clean   # Full cleanup: restore Windows defaults and remove settings
 .\build.ps1 -Launch                 # Launch PaintDark.exe after building
 ```
+
+### Option 2 — Download Pre-Built Release
+
+1. Download **`PaintDark-v1.4.zip`** from **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)** and extract it (or download **`PaintDark.exe`** to run standalone with zero setup).
+2. Double-click **`Activate Paint Dark Mode.cmd`** (or run `build.ps1` and choose **`[1] Apply Dark Mode`**) to set Legacy Paint Dark Mode as your default editor for `Right-click -> Edit` @ image files in File Explorer (while hiding *"Edit with Paint 3D"*).
+3. To restore the original Windows Paint at any time, double-click **`Revert to Windows Paint.cmd`** (or choose **`[2] Revert`** in `build.ps1`).
+
+**Target OS:** Developed and tested on **Windows 10 22H2 (Build 19045)**. Also works on Windows 11.
 
 ---
 

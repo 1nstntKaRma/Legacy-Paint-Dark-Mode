@@ -12,7 +12,7 @@
 #   .\build.ps1 -Launch                 launch PaintDark.exe after building
 param(
     [switch]$Debug,
-    [ValidateSet('Ask', 'Apply', 'Apply Dark Mode', 'Yes', 'Revert', 'Abort', 'Cancel', 'No', 'Clean')][string]$Shell = 'Ask',
+    [ValidateSet('Ask', 'Apply', 'Apply Dark Mode', 'Yes', '1', 'Revert', '2', 'Cancel', 'Abort', 'No', '3', 'Clean')][string]$Shell = 'Ask',
     [switch]$NoBuild,
     [switch]$Launch
 )
@@ -33,11 +33,36 @@ $InstallMarker = Join-Path $InstallDir 'installed-by-build.ps1.txt'
 try { Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
 
 # Normalize $Shell aliases
+$ReleaseZipUrl = 'https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest/download/PaintDark-v1.4.zip'
+$RoslynNugetUrl = 'https://www.nuget.org/api/v2/package/Microsoft.Net.Compilers.Toolset/4.11.0'
+$TempRoslynDir = Join-Path $env:TEMP 'RoslynCompiler-4.11.0'
+
 switch ($Shell) {
+    '1'               { $Shell = 'Apply' }
     'Yes'             { $Shell = 'Apply' }
     'Apply Dark Mode' { $Shell = 'Apply' }
-    'No'              { $Shell = 'Abort' }
-    'Cancel'          { $Shell = 'Abort' }
+    '2'               { $Shell = 'Revert' }
+    '3'               { $Shell = 'Cancel' }
+    'Abort'           { $Shell = 'Cancel' }
+    'No'              { $Shell = 'Cancel' }
+}
+
+function Read-Choice([string[]]$lines, [int]$defaultIndex = 0) {
+    Write-Host ''
+    foreach ($line in $lines) { Write-Host $line }
+    Write-Host ''
+    while ($true) {
+        Write-Host 'Choice: ' -NoNewline
+        $raw = Read-Host
+        if ($null -eq $raw) { return $defaultIndex }
+        $v = $raw.Trim()
+        if ($v -eq '') { return $defaultIndex }
+        switch ($v) {
+            '1' { return 0 }
+            '2' { return 1 }
+            '3' { return 2 }
+        }
+    }
 }
 
 function Test-Interactive {
@@ -55,6 +80,7 @@ function Start-ExitCountdown([int]$seconds = 3, [string]$color = 'Gray') {
 }
 
 function Exit-Session([int]$code = 0) {
+    if (Test-Path -LiteralPath $TempRoslynDir) { Remove-Item -LiteralPath $TempRoslynDir -Recurse -Force -ErrorAction SilentlyContinue }
     if (Test-Interactive) {
         try {
             $self = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue
@@ -110,11 +136,70 @@ function Invoke-Build {
     $csc = Get-ChildItem "$env:ProgramFiles\dotnet\sdk\*\Roslyn\bincore\csc.dll" -ErrorAction SilentlyContinue |
         Sort-Object { [version]($_.FullName -replace '.*\\sdk\\([\d\.]+)[^\\]*\\.*', '$1') } -Descending | Select-Object -First 1
     if (-not $csc) {
+        $tempCsc = Join-Path $TempRoslynDir 'tasks\net472\csc.exe'
+        if (Test-Path -LiteralPath $tempCsc) { $csc = Get-Item -LiteralPath $tempCsc }
+    }
+    if (-not $csc) {
         if (Test-Path -LiteralPath $exe) {
             Show-BuildSummary
             return
         }
-        throw 'No .NET SDK found (needed only to build from source; download the pre-built Release zip if you do not have the .NET SDK installed).'
+        $cPick = 0
+        if (Test-Interactive) {
+            Write-Host 'No local C# compiler (.NET SDK) was detected on this system.' -ForegroundColor Yellow
+            $compilerLines = @(
+                '  [1] Compile Locally - Download Microsoft''s official Roslyn compiler (~25 MB in temp) and compile from source.',
+                '  [2] Use Pre-built   - Download the pre-built release executable directly from GitHub Releases.',
+                '  [3] Cancel          - Exit without downloading or changing anything.'
+            )
+            $cPick = Read-Choice -lines $compilerLines -defaultIndex 0
+        }
+        if ($cPick -eq 2) {
+            Write-Host ''
+            Write-Host '[X] Operation aborted: No files were downloaded and no system changes were made.' -ForegroundColor Red
+            Exit-Session 0
+        }
+        elseif ($cPick -eq 1) {
+            Write-Host 'Downloading pre-built release executable from GitHub Releases...' -ForegroundColor Cyan
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $z = Join-Path $env:TEMP ('PaintDark-rel-' + [guid]::NewGuid().ToString('N') + '.zip')
+            $x = Join-Path $env:TEMP ('PaintDark-ext-' + [guid]::NewGuid().ToString('N'))
+            try {
+                Invoke-WebRequest -Uri $ReleaseZipUrl -OutFile $z -UseBasicParsing
+                Expand-Archive -LiteralPath $z -DestinationPath $x -Force
+                Copy-Item -LiteralPath (Join-Path $x 'bin\PaintDark.exe') -Destination $exe -Force
+                try { Unblock-File -LiteralPath $exe -ErrorAction SilentlyContinue } catch {}
+            } finally {
+                Remove-Item -LiteralPath $z -Force -ErrorAction SilentlyContinue
+                Remove-Item -LiteralPath $x -Recurse -Force -ErrorAction SilentlyContinue
+            }
+            Show-BuildSummary
+            return
+        }
+        else {
+            Write-Host "Downloading Microsoft's official Roslyn compiler (~25 MB) to temp..." -ForegroundColor Cyan
+            try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                $z = Join-Path $env:TEMP ('roslyn-' + [guid]::NewGuid().ToString('N') + '.zip')
+                Invoke-WebRequest -Uri $RoslynNugetUrl -OutFile $z -UseBasicParsing
+                if (Test-Path -LiteralPath $TempRoslynDir) { Remove-Item -LiteralPath $TempRoslynDir -Recurse -Force -ErrorAction SilentlyContinue }
+                Expand-Archive -LiteralPath $z -DestinationPath $TempRoslynDir -Force
+                Remove-Item -LiteralPath $z -Force -ErrorAction SilentlyContinue
+                $tempCsc = Join-Path $TempRoslynDir 'tasks\net472\csc.exe'
+                if (Test-Path -LiteralPath $tempCsc) { $csc = Get-Item -LiteralPath $tempCsc }
+            } catch {
+                Write-Host "Standalone Roslyn download unavailable ($($_.Exception.Message)). Falling back to winget (.NET SDK)..." -ForegroundColor Yellow
+            }
+            if (-not $csc) {
+                $wg = Get-Command winget -ErrorAction SilentlyContinue
+                if ($wg) {
+                    & winget install --id Microsoft.DotNet.SDK.8 --exact --accept-source-agreements --accept-package-agreements
+                    $csc = Get-ChildItem "$env:ProgramFiles\dotnet\sdk\*\Roslyn\bincore\csc.dll" -ErrorAction SilentlyContinue |
+                        Sort-Object { [version]($_.FullName -replace '.*\\sdk\\([\d\.]+)[^\\]*\\.*', '$1') } -Descending | Select-Object -First 1
+                }
+            }
+            if (-not $csc) { throw 'Unable to acquire the Roslyn C# compiler via NuGet or winget.' }
+        }
     }
 
     $fw = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319"
@@ -128,7 +213,7 @@ function Invoke-Build {
 
     function Compile($out, $extra) {
         $argv = @($common) + @($extra | Where-Object { $_ }) + @("-out:$out") + @($refs) + @($files)
-        & dotnet $csc.FullName @argv
+        if ($csc.Extension -ieq '.dll') { & dotnet $csc.FullName @argv } else { & $csc.FullName @argv }
         if ($LASTEXITCODE -ne 0) { throw "Compilation failed ($LASTEXITCODE)" }
     }
 
@@ -378,21 +463,19 @@ try {
 
     if ($Shell -eq 'Ask') {
         if (Test-Interactive) {
-            $choices = [System.Management.Automation.Host.ChoiceDescription[]]@(
-                (New-Object System.Management.Automation.Host.ChoiceDescription '&Apply Dark Mode', 'Right-click "Edit" on image files will now use Legacy Paint Dark Mode.'),
-                (New-Object System.Management.Automation.Host.ChoiceDescription '&Revert', 'Restore the original Windows Paint.'),
-                (New-Object System.Management.Automation.Host.ChoiceDescription 'A&bort', 'Exit without changing anything.'))
-            $msg = "`n  Apply Dark Mode - Right-click `"Edit`" on image files will now use Legacy Paint Dark Mode.`n" +
-                   "  Revert          - Restore the original Windows Paint`n" +
-                   "  Abort           - Exit without changing anything`n"
-            $pick = $Host.UI.PromptForChoice('Legacy Paint - Dark Mode', $msg, $choices, 2)
+            $actionLines = @(
+                '  [1] Apply Dark Mode - Right-click "Edit" @ image files will use Paint - Dark Mode.',
+                '  [2] Revert          - Restore the original Windows Paint.',
+                '  [3] Cancel          - Exit without changing anything.'
+            )
+            $pick = Read-Choice -lines $actionLines -defaultIndex 0
             $asked = $true
-            $Shell = @('Apply', 'Revert', 'Abort')[$pick]
+            $Shell = @('Apply', 'Revert', 'Cancel')[$pick]
         }
-        else { $Shell = 'Abort' }
+        else { $Shell = 'Cancel' }
     }
 
-    if ($Shell -eq 'Abort') {
+    if ($Shell -eq 'Cancel') {
         if ($asked -or $NoBuild) {
             Write-Host ''
             Write-Host '[X] Operation aborted: No system changes were made.' -ForegroundColor Red
