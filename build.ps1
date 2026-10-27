@@ -17,6 +17,7 @@ param(
     [switch]$Launch
 )
 $ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
 $root = $PSScriptRoot
 $src = Join-Path $root 'src'
 $bin = Join-Path $root 'bin'
@@ -81,26 +82,28 @@ function Start-ExitCountdown([int]$seconds = 3, [string]$color = 'Gray') {
 
 function Exit-Session([int]$code = 0) {
     if (Test-Path -LiteralPath $TempRoslynDir) { Remove-Item -LiteralPath $TempRoslynDir -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Interactive) {
+    if (Test-Interactive -and $Host.Name -eq 'ConsoleHost') {
         try {
+            $tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\')
+            $cleanCmd = ""
+            if ($root.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $escapedRoot = $root.Replace("'", "''")
+                $cleanCmd = "Remove-Item -LiteralPath '$escapedRoot' -Recurse -Force -ErrorAction SilentlyContinue; "
+            }
+            $pidsToStop = @($PID)
             $self = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction SilentlyContinue
             if ($self -and $self.ParentProcessId) {
                 $parent = Get-CimInstance Win32_Process -Filter "ProcessId = $($self.ParentProcessId)" -ErrorAction SilentlyContinue
                 if ($parent -and $parent.Name -match '^(powershell|pwsh|cmd)(\.exe)?$') {
-                    $parentPid = [int]$parent.ProcessId
-                    $tempRoot = [System.IO.Path]::GetTempPath().TrimEnd('\')
-                    $cleanCmd = ""
-                    if ($root.StartsWith($tempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
-                        $escapedRoot = $root.Replace("'", "''")
-                        $cleanCmd = "Remove-Item -LiteralPath '$escapedRoot' -Recurse -Force -ErrorAction SilentlyContinue; "
-                    }
-                    $killScript = "Start-Sleep -Milliseconds 250; $cleanCmd Stop-Process -Id $parentPid -Force -ErrorAction SilentlyContinue"
-                    Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-WindowStyle', 'Hidden', '-Command', $killScript) -WorkingDirectory $tempRoot -WindowStyle Hidden | Out-Null
+                    $pidsToStop += [int]$parent.ProcessId
                 }
             }
+            $pidList = $pidsToStop -join ','
+            $killScript = "Start-Sleep -Milliseconds 200; $cleanCmd Stop-Process -Id $pidList -Force -ErrorAction SilentlyContinue"
+            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($killScript))
+            Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $encoded) -WorkingDirectory $tempRoot -WindowStyle Hidden | Out-Null
         } catch {}
         try { $Host.SetShouldExit($code) } catch {}
-        [Environment]::Exit($code)
     }
     exit $code
 }
@@ -220,13 +223,17 @@ function Invoke-Build {
     $running = Get-Process PaintDark -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }
     if ($running) { throw "Paint Dark Mode is running from $exe. Close it and build again." }
 
-    $ico = Join-Path $obj 'app.ico'
-    $tmp = Join-Path $obj 'PaintDark.noicon.exe'
-    Compile $tmp @()
-    & $tmp --export-icon $ico | Out-Null
-    Start-Sleep -Milliseconds 200
-    if (-not (Test-Path $ico)) { throw 'Icon export failed.' }
-    Compile $exe @("-win32icon:$ico")
+    Write-Host 'Compiling from source...' -ForegroundColor Cyan
+    try {
+        $ico = Join-Path $obj 'app.ico'
+        $tmp = Join-Path $obj 'PaintDark.noicon.exe'
+        Compile $tmp @()
+        Start-Process -FilePath $tmp -ArgumentList @('--export-icon', $ico) -WindowStyle Hidden -Wait | Out-Null
+        if (-not (Test-Path $ico)) { throw 'Icon export failed.' }
+        Compile $exe @("-win32icon:$ico")
+    } finally {
+        if (Test-Path -LiteralPath $TempRoslynDir) { Remove-Item -LiteralPath $TempRoslynDir -Recurse -Force -ErrorAction SilentlyContinue }
+    }
 
     Show-BuildSummary
 }
