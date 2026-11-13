@@ -176,11 +176,14 @@ namespace PaintDark
             if (img.W > Doc.Width || img.H > Doc.Height)
                 ResizeCanvas(new Size(Math.Max(img.W, Doc.Width), Math.Max(img.H, Doc.Height)));
             if (Tool != ToolKind.Select) SetTool(ToolKind.Select);
+            // zoom out (never in) when the pasted picture would not fit the window at the current zoom
+            View?.ZoomToShow(new Size(img.W, img.H));
             var vp = View != null ? View.ImageViewport : Doc.Bounds;
             int x = Math.Max(0, Math.Min(vp.X, Doc.Width - img.W));
             int y = Math.Max(0, Math.Min(vp.Y, Doc.Height - img.H));
             if (li.HasAlpha) Doc.HasAlpha = Doc.HasAlpha || false;
             Select.PasteImage(img, li.HasAlpha, new Point(x, y));
+            View?.ScrollIntoView(new Rectangle(x, y, img.W, img.H));
         }
 
         public void ConvertToBlackAndWhite()

@@ -370,16 +370,22 @@ namespace PaintDark
             int sz = Native.MetricForDpi(13 /*SM_CXCURSOR*/, dpi);
             if (sz < 32) sz = Math.Max(32, (int)Math.Round(32 * dpi / 96.0));
             Crosshair = Cross;
-            Pencil = Make(sz, 1, 16, DrawPencil);
-            Fill = Make(sz, 2, 15, DrawBucket);
-            Picker = Make(sz, 1, 16, DrawPicker);
-            Magnifier = Make(sz, 6, 6, DrawMagnifier);
+            // the tool art sits up and to the right of a crosshair whose hollow centre is the hotspot
+            Pencil = Make(sz, 7, 24, DrawPencil, 3, 5, true);
+            Fill = Make(sz, 7, 24, DrawBucket, 3, 5, true);
+            Picker = Make(sz, 7, 24, DrawPicker, 3, 5, true);
+            Magnifier = Make(sz, 6, 6, DrawMagnifier, 2, 3, false);
         }
 
-        /// <summary>Art is designed on a 32-unit cursor grid (only the top-left ~17 units are used, like real cursors).</summary>
-        static IntPtr Make(int size, float hx, float hy, Action<Graphics> draw)
+        /// <summary>
+        /// Art is designed on a 32-unit cursor grid where unit pixel (hx, hy) is the hotspot. The art is scaled around that
+        /// pixel and the target crosshair is drawn in device pixels afterwards, so at every DPI the pixel that gets painted is
+        /// exactly the one in the middle of the marker.
+        /// </summary>
+        static IntPtr Make(int size, int hx, int hy, Action<Graphics> draw, int armFrom, int armTo, bool outline)
         {
             float s = size / 32f;
+            int cx = (int)Math.Round(hx * s), cy = (int)Math.Round(hy * s);
             using (var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
             {
                 using (var g = Graphics.FromImage(bmp))
@@ -387,11 +393,36 @@ namespace PaintDark
                     g.Clear(Color.Transparent);
                     g.SmoothingMode = s == 1f ? SmoothingMode.None : SmoothingMode.AntiAlias;
                     g.PixelOffsetMode = PixelOffsetMode.Half;
+                    var st = g.Save();
+                    g.TranslateTransform(cx + 0.5f - (hx + 0.5f) * s, cy + 0.5f - (hy + 0.5f) * s);
                     g.ScaleTransform(s, s);
                     draw(g);
+                    g.Restore(st);
+                    DrawTarget(g, cx, cy, s, armFrom, armTo, outline);
                 }
-                return Build(bmp, (int)Math.Floor(hx * s), (int)Math.Floor(hy * s));
+                return Build(bmp, cx, cy);
             }
+        }
+
+        /// <summary>Four arms around (cx, cy) leaving the centre pixel and its neighbours clear, white-edged when on its own.</summary>
+        static void DrawTarget(Graphics g, int cx, int cy, float s, int from, int to, bool outline)
+        {
+            g.SmoothingMode = SmoothingMode.None;
+            int a = Math.Max(2, (int)Math.Round(from * s)), b = Math.Max(a + 1, (int)Math.Round(to * s));
+            int t = s >= 2.5f ? 1 : 0;           // half width: a 1 px core, 3 px from 250 % scaling
+            var arms = new[]
+            {
+                Rectangle.FromLTRB(cx - t, cy - b, cx + t + 1, cy - a + 1),
+                Rectangle.FromLTRB(cx - t, cy + a, cx + t + 1, cy + b + 1),
+                Rectangle.FromLTRB(cx - b, cy - t, cx - a + 1, cy + t + 1),
+                Rectangle.FromLTRB(cx + a, cy - t, cx + b + 1, cy + t + 1),
+            };
+            if (outline)
+            {
+                int o = s >= 2.5f ? 2 : 1;
+                foreach (var r in arms) g.FillRectangle(Brushes.White, Rectangle.Inflate(r, o, o));
+            }
+            foreach (var r in arms) g.FillRectangle(Brushes.Black, r);
         }
 
         static unsafe IntPtr Build(Bitmap bmp, int hx, int hy)
@@ -439,41 +470,40 @@ namespace PaintDark
             g.DrawPolygon(Ink, pts);
         }
 
-        // pencil pointing to the lower left, tip = hotspot (1,16)
+        // pencil pointing down-left, its tip just off the target centred on pixel (7,24)
         static void DrawPencil(Graphics g)
         {
-            Shape(g, 1, 16, 2, 12, 12, 2, 15, 5, 5, 15);          // body + cone outline
-            g.DrawLine(Ink, 2, 12, 5, 15);                         // where the wood starts
-            g.DrawLine(Ink, 10, 4, 13, 7);                         // eraser band
-            g.FillPolygon(Brushes.Black, new[] { new PointF(1, 16), new PointF(1.6f, 13.6f), new PointF(3.4f, 15.4f) });
+            Shape(g, 10, 22, 11, 18, 21, 8, 24, 11, 14, 21);      // body + cone outline
+            g.DrawLine(Ink, 11, 18, 14, 21);                       // where the wood starts
+            g.DrawLine(Ink, 19, 10, 22, 13);                       // eraser band
+            g.FillPolygon(Brushes.Black, new[] { new PointF(10, 22), new PointF(10.6f, 19.6f), new PointF(12.4f, 21.4f) });
         }
 
-        // tilted paint bucket pouring to the left, drip = hotspot (2,15)
+        // tilted paint bucket whose paint falls straight down into the target centred on pixel (7,24)
         static void DrawBucket(Graphics g)
         {
-            Shape(g, 9, 3, 16, 10, 10, 16, 3, 9);                 // can
-            g.DrawLine(Ink, 9, 3, 7, 1);                           // handle
-            g.DrawArc(Ink, 5, -1, 6, 6, 180, 180);
-            g.FillPolygon(Brushes.Black, new[] { new PointF(3, 9), new PointF(6, 6), new PointF(5, 9), new PointF(3, 12) });   // paint at the lip
-            g.FillRectangle(Brushes.Black, 2, 10, 1.6f, 5);       // pouring stream
-            g.FillEllipse(Brushes.Black, 1.2f, 14, 2.4f, 2.6f);   // drop
+            Shape(g, 14, 3, 21, 10, 15, 16, 8, 9);                // can
+            g.DrawLine(Ink, 14, 3, 12, 1);                         // handle
+            g.DrawArc(Ink, 10, -1, 6, 6, 180, 180);
+            g.FillPolygon(Brushes.Black, new[] { new PointF(8, 9), new PointF(11, 6), new PointF(10, 9), new PointF(8, 12) });   // paint at the lip
+            g.FillRectangle(Brushes.Black, 6.7f, 10, 1.6f, 5);    // pouring stream
+            g.FillEllipse(Brushes.Black, 6.3f, 14, 2.4f, 2.6f);   // drop
         }
 
-        // eyedropper, tip = hotspot (1,16)
+        // eyedropper pointing down-left, its tip just off the target centred on pixel (7,24)
         static void DrawPicker(Graphics g)
         {
-            Shape(g, 1, 16, 1, 14, 9, 6, 11, 8, 3, 16);            // glass tube
-            Shape(g, 8, 5, 12, 1, 16, 5, 12, 9);                   // bulb
-            g.FillPolygon(Brushes.Black, new[] { new PointF(9, 4), new PointF(12, 1), new PointF(16, 5), new PointF(13, 8) });
+            Shape(g, 10, 22, 10, 20, 18, 12, 20, 14, 12, 22);      // glass tube
+            Shape(g, 17, 11, 21, 7, 25, 11, 21, 15);               // bulb
+            g.FillPolygon(Brushes.Black, new[] { new PointF(18, 10), new PointF(21, 7), new PointF(25, 11), new PointF(22, 14) });
         }
 
-        // magnifying glass, centre of the lens = hotspot (6,6)
+        // magnifying glass, the small cross in the middle of the lens marks pixel (6,6)
         static void DrawMagnifier(Graphics g)
         {
-            using (var handle = new Pen(Color.Black, 3f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(handle, 10.5f, 10.5f, 15.5f, 15.5f);
-            g.FillEllipse(Brushes.White, 1, 1, 10, 10);
-            g.DrawEllipse(Ink, 1, 1, 10, 10);
-            using (var shine = new Pen(Color.FromArgb(160, 0, 0, 0), 1f)) g.DrawArc(shine, 3, 3, 6, 6, 190, 70);
+            using (var handle = new Pen(Color.Black, 3f) { StartCap = LineCap.Round, EndCap = LineCap.Round }) g.DrawLine(handle, 11, 11, 16, 16);
+            g.FillEllipse(Brushes.White, 1.5f, 1.5f, 10, 10);
+            g.DrawEllipse(Ink, 1.5f, 1.5f, 10, 10);
         }
     }
 }

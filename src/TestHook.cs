@@ -15,6 +15,7 @@ namespace PaintDark
     public static class TestHook
     {
         public static bool Enabled;
+        [DllImport("user32.dll")] static extern bool GetIconInfo(IntPtr icon, out ICONINFO info);
         [DllImport("user32.dll")] static extern bool DrawIconEx(IntPtr hdc, int x, int y, IntPtr icon, int cx, int cy, int step, IntPtr brush, int flags);
         public static bool Ctrl, Shift, Alt;
         static readonly System.Diagnostics.Stopwatch _sw = System.Diagnostics.Stopwatch.StartNew();
@@ -160,7 +161,7 @@ namespace PaintDark
                             Application.DoEvents();
                             break;
                         }
-                    case "key":
+                    case "key": case "keyrep":
                         {
                             Keys keys = 0;
                             foreach (var part in arg.Split('+'))
@@ -170,7 +171,7 @@ namespace PaintDark
                                 else keys |= (Keys)Enum.Parse(typeof(Keys), part.Trim(), true);
                             }
                             Ctrl = (keys & Keys.Control) != 0; Shift = (keys & Keys.Shift) != 0; Alt = (keys & Keys.Alt) != 0;
-                            try { f.TestKey(keys); }
+                            try { f.TestKey(keys, cmd == "keyrep"); }
                             finally { Ctrl = Shift = Alt = false; }
                             Application.DoEvents();
                             break;
@@ -197,6 +198,21 @@ namespace PaintDark
                     case "outline": f.E.SetOutline((Texture)Enum.Parse(typeof(Texture), arg, true)); break;
                     case "fill": f.E.SetShapeFill((Texture)Enum.Parse(typeof(Texture), arg, true)); break;
                     case "zoom": f.Canvas.SetZoom(float.Parse(arg, System.Globalization.CultureInfo.InvariantCulture), null); break;
+                    case "vp": { var v = f.Canvas.ImageViewport; sb.AppendLine("vp=" + v.X + "," + v.Y + "," + v.Width + "," + v.Height + " canvas=" + f.Canvas.ClientSize.Width + "x" + f.Canvas.ClientSize.Height); break; }
+                    case "fitinfo":
+                        {
+                            const System.Reflection.BindingFlags nb = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                            var fit = typeof(CanvasView).GetMethod("FitZoom", nb).Invoke(f.Canvas, new object[] { f.E.Doc.Size, 1f });
+                            var auto = typeof(CanvasView).GetField("_autoFit", nb).GetValue(f.Canvas);
+                            sb.AppendLine("fit=" + fit + " autofit=" + auto + " zoom=" + f.Canvas.Zoom + " canvas=" + f.Canvas.ClientSize.Width + "x" + f.Canvas.ClientSize.Height);
+                            foreach (var pn in new[] { "CanvasMargin", "HandleSize", "RulerSize", "SBSize" })
+                                sb.Append(pn + "=" + typeof(CanvasView).GetProperty(pn, nb).GetValue(f.Canvas) + " ");
+                            foreach (var zz in new[] { 0.6f, 0.7f, 0.75f })
+                                sb.Append("fits(" + zz + ")=" + typeof(CanvasView).GetMethod("Fits", nb).Invoke(f.Canvas, new object[] { f.E.Doc.Size, zz }) + " ");
+                            sb.AppendLine();
+                            break;
+                        }
+                    case "scrollto": f.Canvas.ScrollToImagePoint(new PointF(int.Parse(a[0]), int.Parse(a[1]))); Application.DoEvents(); break;
                     case "dclose": { var d = TopModal(f); if (d != null) { d.DialogResult = DialogResult.Cancel; d.Close(); } Application.DoEvents(); break; }
                     case "dok": { var d = TopModal(f); (d?.AcceptButton as IButtonControl)?.PerformClick(); Application.DoEvents(); break; }
                     case "img":
@@ -218,6 +234,7 @@ namespace PaintDark
                             break;
                         }
                     case "open": f.OpenFile(arg, false, false); Application.DoEvents(); break;
+                    case "pastefile": f.E.PasteImage(ImageIO.Load(arg)); Application.DoEvents(); break;
                     case "size": f.WindowState = FormWindowState.Normal; f.Size = new Size(int.Parse(a[0]), int.Parse(a[1])); Application.DoEvents(); break;
                     case "max": f.WindowState = FormWindowState.Maximized; Application.DoEvents(); break;
                     case "focus": f.Canvas.Focus(); break;
@@ -251,19 +268,38 @@ namespace PaintDark
                     case "keytips": f.Ribbon.BeginKeyTips(); f.Ribbon.Invalidate(); break;
                     case "popupinfo": sb.AppendLine(Popups.Top is AppMenu am ? am.DebugInfo : (Popups.Top?.GetType().Name ?? "none") + " " + Popups.Top?.Bounds); break;
                     case "shot": Shot(f, arg); break;
+                    case "bufshot":
+                        {
+                            // the canvas back buffer as last painted, partial repaints included (shot repaints everything)
+                            var dib = (Dib)typeof(DarkControl).GetProperty("BufferDib", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).GetValue(f.Canvas);
+                            Native.GdiFlush();
+                            ImageIO.Save(dib, false, arg, "png", 24, 96);
+                            break;
+                        }
                     case "cursors":
                         {
+                            // rows: on black, on white, on mid grey with the hotspot pixel painted red
                             var list = new[] { AppCursors.Pencil, AppCursors.Fill, AppCursors.Picker, AppCursors.Magnifier, AppCursors.Cross, AppCursors.IBeam, AppCursors.Arrow };
-                            using (var bmp = new Bitmap(list.Length * 56, 112))
+                            const int cell = 80;
+                            using (var bmp = new Bitmap(list.Length * cell, cell * 3))
                             {
                                 using (var g = Graphics.FromImage(bmp))
                                 {
                                     g.Clear(Color.Black);
-                                    g.FillRectangle(Brushes.White, 0, 56, bmp.Width, 56);
+                                    g.FillRectangle(Brushes.White, 0, cell, bmp.Width, cell);
+                                    g.FillRectangle(Brushes.Gray, 0, cell * 2, bmp.Width, cell);
                                     IntPtr hdc = g.GetHdc();
-                                    for (int i = 0; i < list.Length; i++) { DrawIconEx(hdc, i * 56 + 8, 8, list[i], 0, 0, 0, IntPtr.Zero, 3); DrawIconEx(hdc, i * 56 + 8, 64, list[i], 0, 0, 0, IntPtr.Zero, 3); }
+                                    for (int i = 0; i < list.Length; i++)
+                                        for (int r = 0; r < 3; r++) DrawIconEx(hdc, i * cell + 8, r * cell + 8, list[i], 0, 0, 0, IntPtr.Zero, 3);
                                     g.ReleaseHdc(hdc);
                                 }
+                                for (int i = 0; i < list.Length; i++)
+                                    if (GetIconInfo(list[i], out var ii))
+                                    {
+                                        bmp.SetPixel(i * cell + 8 + ii.xHotspot, cell * 2 + 8 + ii.yHotspot, Color.Red);
+                                        if (ii.hbmMask != IntPtr.Zero) Native.DeleteObject(ii.hbmMask);
+                                        if (ii.hbmColor != IntPtr.Zero) Native.DeleteObject(ii.hbmColor);
+                                    }
                                 bmp.Save(arg, ImageFormat.Png);
                             }
                             break;

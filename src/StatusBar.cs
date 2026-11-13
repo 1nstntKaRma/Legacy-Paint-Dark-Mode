@@ -29,17 +29,17 @@ namespace PaintDark
             _zoomText = new Rectangle(_minus.Left - D.S(52), 0, D.S(48), h);
         }
 
-        // slider position <-> zoom: 100% sits in the middle, left half spans 12.5..100, right half 100..800
+        // slider position <-> zoom: 100% sits in the middle, each half is logarithmic (lowest level..100, 100..highest level)
         float ZoomToPos(float z)
         {
-            double t = z <= 1 ? 0.5 * (Math.Log(z / 0.125, 2) / 3.0) : 0.5 + 0.5 * ((z - 1) / 7.0);
+            double lo = CanvasView.Levels[0], hi = CanvasView.Levels[CanvasView.Levels.Length - 1];
+            double t = z <= 1 ? 0.5 * Math.Log(z / lo) / Math.Log(1 / lo) : 0.5 + 0.5 * Math.Log(z) / Math.Log(hi);
             return (float)Math.Max(0, Math.Min(1, t));
         }
 
         float PosToZoom(float t)
         {
-            float z = t <= 0.5f ? (float)(0.125 * Math.Pow(2, t / 0.5 * 3)) : 1 + (t - 0.5f) / 0.5f * 7;
-            // snap to Paint's zoom levels
+            // snap to the zoom levels
             float best = CanvasView.Levels[0];
             foreach (var l in CanvasView.Levels) if (Math.Abs(ZoomToPos(l) - t) < Math.Abs(ZoomToPos(best) - t)) best = l;
             return best;

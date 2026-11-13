@@ -228,7 +228,9 @@ function Invoke-Build {
         $ico = Join-Path $obj 'app.ico'
         $tmp = Join-Path $obj 'PaintDark.noicon.exe'
         Compile $tmp @()
-        Start-Process -FilePath $tmp -ArgumentList @('--export-icon', $ico) -WindowStyle Hidden -Wait | Out-Null
+        # quoted: Start-Process does not quote arguments, and a path with spaces would start the full app hidden instead
+        if (Test-Path -LiteralPath $ico) { Remove-Item -LiteralPath $ico -Force }
+        Start-Process -FilePath $tmp -ArgumentList @('--export-icon', "`"$ico`"") -WindowStyle Hidden -Wait | Out-Null
         if (-not (Test-Path $ico)) { throw 'Icon export failed.' }
         Compile $exe @("-win32icon:$ico")
     } finally {

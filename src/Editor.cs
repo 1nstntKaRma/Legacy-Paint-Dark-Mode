@@ -239,7 +239,9 @@ namespace PaintDark
         public void Commit(Rectangle hint, string name)
         {
             var changed = Doc.Commit(hint, name);
-            View?.InvalidateImage(changed);
+            // the hint also covers in-between states the view has shown (a selection moved away and back has no net
+            // change, but the zoomed-out cache still holds the hole it left)
+            View?.InvalidateImage(Raster.Union(changed, Rectangle.Intersect(hint, Doc.Bounds)));
             Notify(Change.Image | Change.Commands | Change.Title);
         }
 

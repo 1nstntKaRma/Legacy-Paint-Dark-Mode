@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Windows.Forms;
@@ -167,8 +168,15 @@ namespace PaintDark
     public sealed class CanvasView : DarkControl
     {
         readonly Editor E;
-        public float Zoom { get; private set; } = 1f;
-        public static readonly float[] Levels = { 0.125f, 0.25f, 0.5f, 1f, 2f, 3f, 4f, 5f, 6f, 7f, 8f };
+        float _zoom = 1f;
+        int _zn = 1, _zd = 1;   // the zoom as an exact fraction: _zd picture pixels span _zn screen pixels
+        public float Zoom { get => _zoom; private set { _zoom = value; Ratio(value, out _zn, out _zd); } }
+        public static readonly float[] Levels =
+        {
+            0.1f, 0.125f, 0.15f, 0.2f, 0.25f, 1f / 3, 0.4f, 0.5f, 0.6f, 0.7f, 0.75f, 0.8f, 0.9f,
+            1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 4f, 5f, 6f, 7f, 8f,
+        };
+        bool _autoFit;          // an opened picture keeps fitting the window until the user zooms or starts working
         int _sx, _sy;
         bool _rulers, _grid;
         readonly DarkScroll _hs, _vs;
@@ -223,7 +231,7 @@ namespace PaintDark
         Document Doc => E.Doc;
 
         public Rectangle CanvasRect => new Rectangle(OriginX, OriginY, Scaled(Doc.Width), Scaled(Doc.Height));
-        int Scaled(int v) => (int)Math.Round(v * (double)Zoom);
+        int Scaled(int v) => (int)Math.Round((double)v * _zn / _zd);
         public float ZoomedSize(int px) => px * Zoom;
 
         public Rectangle ImageViewport
@@ -241,11 +249,11 @@ namespace PaintDark
         public PointF ViewToImage(Point p) => new PointF((p.X - OriginX) / Zoom, (p.Y - OriginY) / Zoom);
         public PointF ViewToImage(PointF p) => new PointF((p.X - OriginX) / Zoom, (p.Y - OriginY) / Zoom);
         public PointF ImageToViewF(PointF p) => new PointF(p.X * Zoom + OriginX, p.Y * Zoom + OriginY);
-        public Point ImageToView(Point p) => new Point((int)Math.Round(p.X * Zoom) + OriginX, (int)Math.Round(p.Y * Zoom) + OriginY);
+        public Point ImageToView(Point p) => new Point(Scaled(p.X) + OriginX, Scaled(p.Y) + OriginY);
         public Rectangle ImageToView(Rectangle r)
         {
-            int x0 = (int)Math.Floor(r.Left * (double)Zoom) + OriginX, y0 = (int)Math.Floor(r.Top * (double)Zoom) + OriginY;
-            int x1 = (int)Math.Ceiling(r.Right * (double)Zoom) + OriginX, y1 = (int)Math.Ceiling(r.Bottom * (double)Zoom) + OriginY;
+            int x0 = (int)Math.Floor((double)r.Left * _zn / _zd) + OriginX, y0 = (int)Math.Floor((double)r.Top * _zn / _zd) + OriginY;
+            int x1 = (int)Math.Ceiling((double)r.Right * _zn / _zd) + OriginX, y1 = (int)Math.Ceiling((double)r.Bottom * _zn / _zd) + OriginY;
             return Rectangle.FromLTRB(x0, y0, x1, y1);
         }
 
@@ -257,9 +265,93 @@ namespace PaintDark
             return Levels[0];
         }
 
+        static float NearestLevel(float z)
+        {
+            float best = Levels[0];
+            foreach (var l in Levels) if (Math.Abs(Math.Log(l / z)) < Math.Abs(Math.Log(best / z))) best = l;
+            return best;
+        }
+
+        static void Ratio(float z, out int n, out int d)
+        {
+            for (d = 1; d <= 64; d++)
+            {
+                double v = z * (double)d;
+                n = (int)Math.Round(v);
+                if (n > 0 && Math.Abs(v - n) < 1e-3) return;
+            }
+            d = 64; n = Math.Max(1, (int)Math.Round(z * 64.0));
+        }
+
+        static int Gcd(int a, int b) { while (b != 0) { int t = a % b; a = b; b = t; } return a; }
+
+        /// <summary>Zoomed out, the picture is first box-filtered by this whole factor (cached), then stretched by what is left.</summary>
+        int MipFactor => _zn < _zd ? _zd / _zn : 1;
+
+        /// <summary>Whole blocks of <paramref name="bi"/> picture pixels land on exactly <paramref name="bv"/> screen pixels (and whole mip pixels).</summary>
+        void Blocks(out int bi, out int bv)
+        {
+            int k = MipFactor;
+            bi = _zd / Gcd(_zd, k) * k;
+            bv = bi / _zd * _zn;
+        }
+
+        /// <summary>Would a picture area of size s be shown whole at zoom z (scroll bars appear when the whole canvas does not fit)?</summary>
+        bool Fits(Size s, float z)
+        {
+            int pad = CanvasMargin * 2 + HandleSize * 2;
+            int cw = pad + (int)Math.Round(Doc.Width * (double)z), ch = pad + (int)Math.Round(Doc.Height * (double)z);
+            int w = ClientSize.Width - RulerSize, h = ClientSize.Height - RulerSize;
+            bool hv = cw > w, vv = ch > h;
+            if (hv && !vv) vv = ch > h - SBSize;
+            if (vv && !hv) hv = cw > w - SBSize;
+            int vw = w - (vv ? SBSize : 0), vh = h - (hv ? SBSize : 0);
+            return pad + (int)Math.Round(s.Width * (double)z) <= vw && pad + (int)Math.Round(s.Height * (double)z) <= vh;
+        }
+
+        /// <summary>The largest zoom level, at most <paramref name="max"/>, that shows a picture area of size s whole.</summary>
+        float FitZoom(Size s, float max)
+        {
+            for (int i = Levels.Length - 1; i >= 0; i--)
+                if (Levels[i] <= max + 0.0001f && Fits(s, Levels[i])) return Levels[i];
+            return Levels[0];
+        }
+
+        bool CanFit => ClientSize.Width > D.S(120) && ClientSize.Height > D.S(120);
+
+        /// <summary>Zooms out (never in) until a picture area of size s, e.g. a pasted picture, fits the window.</summary>
+        public void ZoomToShow(Size s)
+        {
+            if (Doc == null || !CanFit || Fits(s, Zoom)) return;
+            SetZoom(FitZoom(s, Zoom), null);
+        }
+
+        /// <summary>Scrolls so the picture rect r is in view, when it is not already.</summary>
+        public void ScrollIntoView(Rectangle r)
+        {
+            var rd = Rectangle.Intersect(r, Doc.Bounds);
+            if (rd.IsEmpty || ImageViewport.Contains(rd)) return;
+            ScrollToImagePoint(new PointF(rd.Left, rd.Top));
+        }
+
+        void ApplyAutoFit()
+        {
+            if (!CanFit) return;
+            float z = FitZoom(Doc.Size, 1f);
+            if (Math.Abs(z - Zoom) < 0.0001f) return;
+            Zoom = z;
+            _sx = _sy = 0;
+            UpdateScrollbars();
+            AppCursors.Init(D.Value);
+            Invalidate();
+            ZoomChanged?.Invoke();
+            E.Notify(Change.Zoom);
+        }
+
         public void SetZoom(float z, Point? anchor)
         {
-            z = Math.Max(Levels[0], Math.Min(Levels[Levels.Length - 1], z));
+            _autoFit = false;
+            z = NearestLevel(Math.Max(Levels[0], Math.Min(Levels[Levels.Length - 1], z)));
             if (Math.Abs(z - Zoom) < 0.0001f) return;
             var va = ViewArea;
             Point a = anchor ?? new Point(va.X + va.Width / 2, va.Y + va.Height / 2);
@@ -317,6 +409,7 @@ namespace PaintDark
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
+            if (_autoFit && Doc != null) ApplyAutoFit();
             UpdateScrollbars();
             Invalidate();
         }
@@ -331,12 +424,10 @@ namespace PaintDark
         {
             _mipSrc = null;
             _sx = _sy = 0;
-            // like Paint: open big pictures at the largest zoom level that fits
-            var va = new Size(Math.Max(100, ClientSize.Width - RulerSize - SBSize - CanvasMargin * 3), Math.Max(100, ClientSize.Height - RulerSize - SBSize - CanvasMargin * 3));
-            float z = 1f;
-            if (!string.IsNullOrEmpty(Doc.FilePath) && (Doc.Width > va.Width || Doc.Height > va.Height))
-                for (int i = Array.IndexOf(Levels, 1f); i >= 0; i--) { z = Levels[i]; if (Doc.Width * z <= va.Width && Doc.Height * z <= va.Height) break; }
-            Zoom = z;
+            // open pictures at the largest zoom level (up to 100%) that shows them whole, and keep fitting while the
+            // window settles or is resized, until the user zooms or starts working
+            _autoFit = !string.IsNullOrEmpty(Doc.FilePath);
+            Zoom = _autoFit && CanFit ? FitZoom(Doc.Size, 1f) : 1f;
             UpdateScrollbars();
             Invalidate();
             ZoomChanged?.Invoke();
@@ -413,68 +504,67 @@ namespace PaintDark
 
         unsafe void DrawPicture(Graphics g, Rectangle vis)
         {
-            // map visible view rect -> source picture rect (aligned so integer zoom steps map exactly)
-            Rectangle src, dst;
-            MapToSource(vis, out src, out dst);
+            int k = MipFactor;
+            bool halftone = _zn < _zd;                 // zoomed out: average the pixels instead of dropping them
+            bool exact = _zn * k == _zd;               // whole mip pixels land on whole screen pixels
+            // the visible part of the picture in whole zoom blocks; stretched halftone gets one more block on every side
+            // so its filter edges fall outside the area being painted
+            var src = VisibleSource(vis, halftone && !exact && !Doc.HasAlpha ? 1 : 0);
             if (src.Width <= 0 || src.Height <= 0) return;
+            Blocks(out int bi, out _);
 
             var tool = E.ActiveTool;
             Rectangle ov = tool != null ? tool.CompositeBounds : Rectangle.Empty;
             ov.Intersect(src);
-            bool needScratch = Doc.HasAlpha || (ov.Width > 0 && ov.Height > 0);
+            bool hasOv = ov.Width > 0 && ov.Height > 0;
 
             IntPtr hdc = g.GetHdc();
             try
             {
-                Native.SetStretchBltMode(hdc, Zoom < 1 ? Native.HALFTONE : Native.COLORONCOLOR);
+                Native.SetStretchBltMode(hdc, halftone ? Native.HALFTONE : Native.COLORONCOLOR);
                 Native.SetBrushOrgEx(hdc, 0, 0, IntPtr.Zero);
-                if (Zoom < 1 && !Doc.HasAlpha)
+                if (!Doc.HasAlpha)
                 {
-                    // zoomed out: blit from the cached box-filtered copy, overlays are reduced the same way
-                    int k = EnsureMip();
-                    Native.BitBlt(hdc, dst.X, dst.Y, dst.Width, dst.Height, _mip.DC, src.X / k, src.Y / k, Native.SRCCOPY);
-                    if (ov.Width > 0 && ov.Height > 0)
+                    // zoomed out by a whole factor or more, the cached box-filtered copy is the source
+                    if (k > 1) { EnsureMip(k); Blit(hdc, _mip.DC, src, Point.Empty, k); }
+                    else Blit(hdc, Doc.Image.DC, src, Point.Empty, 1);
+                    if (hasOv)
                     {
-                        var ova = Rectangle.FromLTRB(ov.X / k * k, ov.Y / k * k, Math.Min(Doc.Width, (ov.Right + k - 1) / k * k), Math.Min(Doc.Height, (ov.Bottom + k - 1) / k * k));
+                        // the tool's overlay on top, reduced the same way (with the same extra block for halftone)
+                        var ova = AlignOut(ov, bi);
+                        if (halftone && !exact) ova = Rectangle.Intersect(Rectangle.Inflate(ova, bi, bi), Doc.Bounds);
                         EnsureScratch(ova.Width, ova.Height);
                         _scratch.CopyFrom(Doc.Image, ova, 0, 0);
                         tool.Composite(_scratch, ova);
-                        int ow = (ova.Width + k - 1) / k, oh = (ova.Height + k - 1) / k;
-                        if (_ovMip == null || _ovMip.W < ow || _ovMip.H < oh) { _ovMip?.Dispose(); _ovMip = new Dib(Math.Max(ow, 64), Math.Max(oh, 64)); }
-                        BoxDown(_scratch, new Rectangle(0, 0, ova.Width, ova.Height), _ovMip, 0, 0, k);
-                        var od = SourceToView(ova);
-                        Native.BitBlt(hdc, od.X, od.Y, ow, oh, _ovMip.DC, 0, 0, Native.SRCCOPY);
+                        if (k > 1)
+                        {
+                            int ow = (ova.Width + k - 1) / k, oh = (ova.Height + k - 1) / k;
+                            if (_ovMip == null || _ovMip.W < ow || _ovMip.H < oh) { _ovMip?.Dispose(); _ovMip = new Dib(Math.Max(ow, 64), Math.Max(oh, 64)); }
+                            BoxDown(_scratch, new Rectangle(0, 0, ova.Width, ova.Height), _ovMip, 0, 0, k);
+                            Blit(hdc, _ovMip.DC, ova, ova.Location, k);
+                        }
+                        else Blit(hdc, _scratch.DC, ova, ova.Location, 1);
                     }
-                }
-                else if (!needScratch)
-                {
-                    Native.StretchBlt(hdc, dst.X, dst.Y, dst.Width, dst.Height, Doc.Image.DC, src.X, src.Y, src.Width, src.Height, Native.SRCCOPY);
                 }
                 else
                 {
-                    var region = Doc.HasAlpha ? src : ov;
-                    EnsureScratch(region.Width, region.Height);
-                    _scratch.CopyFrom(Doc.Image, region, 0, 0);
-                    if (ov.Width > 0 && ov.Height > 0) tool.Composite(_scratch, region);
-                    Rectangle rdst = SourceToView(region);
-                    if (!Doc.HasAlpha)
+                    EnsureScratch(src.Width, src.Height);
+                    _scratch.CopyFrom(Doc.Image, src, 0, 0);
+                    if (hasOv) tool.Composite(_scratch, src);
+                    g.ReleaseHdc(hdc); hdc = IntPtr.Zero;
+                    Draw.Checker(g, SourceToView(src), D.S(8));
+                    hdc = g.GetHdc();
+                    for (int y = 0; y < src.Height; y++)
                     {
-                        // whole picture first, then the overlay region on top
-                        Native.StretchBlt(hdc, dst.X, dst.Y, dst.Width, dst.Height, Doc.Image.DC, src.X, src.Y, src.Width, src.Height, Native.SRCCOPY);
-                        Native.StretchBlt(hdc, rdst.X, rdst.Y, rdst.Width, rdst.Height, _scratch.DC, 0, 0, region.Width, region.Height, Native.SRCCOPY);
+                        uint* row = _scratch.Row(y);
+                        for (int x = 0; x < src.Width; x++) row[x] = Px.Premul(row[x]);
                     }
-                    else
+                    Native.SetStretchBltMode(hdc, Native.COLORONCOLOR);
+                    foreach (var p in Pieces(src))
                     {
-                        g.ReleaseHdc(hdc); hdc = IntPtr.Zero;
-                        Draw.Checker(g, dst, D.S(8));
-                        hdc = g.GetHdc();
-                        for (int y = 0; y < region.Height; y++)
-                        {
-                            uint* row = _scratch.Row(y);
-                            for (int x = 0; x < region.Width; x++) row[x] = Px.Premul(row[x]);
-                        }
-                        Native.SetStretchBltMode(hdc, Native.COLORONCOLOR);
-                        Native.AlphaBlend(hdc, rdst.X, rdst.Y, rdst.Width, rdst.Height, _scratch.DC, 0, 0, region.Width, region.Height,
+                        var d = SourceToView(p);
+                        if (d.Width <= 0 || d.Height <= 0) continue;
+                        Native.AlphaBlend(hdc, d.X, d.Y, d.Width, d.Height, _scratch.DC, p.X - src.X, p.Y - src.Y, p.Width, p.Height,
                             new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = 255, AlphaFormat = 1 });
                     }
                 }
@@ -482,9 +572,41 @@ namespace PaintDark
             finally { if (hdc != IntPtr.Zero) g.ReleaseHdc(hdc); }
         }
 
-        int EnsureMip()
+        /// <summary>
+        /// Draws picture rect s from a bitmap that holds the picture from <paramref name="origin"/> on, reduced k times.
+        /// The last partial zoom block is drawn on its own, so every piece is stretched by exactly the zoom ratio and a
+        /// partial repaint matches a full one pixel for pixel.
+        /// </summary>
+        void Blit(IntPtr hdc, IntPtr srcDC, Rectangle s, Point origin, int k)
         {
-            int k = Math.Max(2, (int)Math.Round(1 / Zoom));
+            foreach (var p in Pieces(s))
+            {
+                var d = SourceToView(p);
+                if (d.Width <= 0 || d.Height <= 0) continue;
+                int sx = (p.X - origin.X) / k, sy = (p.Y - origin.Y) / k;
+                int sw = (p.Right - origin.X + k - 1) / k - sx, sh = (p.Bottom - origin.Y + k - 1) / k - sy;
+                if (sw == d.Width && sh == d.Height) Native.BitBlt(hdc, d.X, d.Y, d.Width, d.Height, srcDC, sx, sy, Native.SRCCOPY);
+                else Native.StretchBlt(hdc, d.X, d.Y, d.Width, d.Height, srcDC, sx, sy, sw, sh, Native.SRCCOPY);
+            }
+        }
+
+        /// <summary>Splits a block-aligned picture rect at the start of the last, partial zoom block.</summary>
+        IEnumerable<Rectangle> Pieces(Rectangle s)
+        {
+            Blocks(out int bi, out _);
+            int ax = Doc.Width / bi * bi, ay = Doc.Height / bi * bi;
+            int[] xs = s.Left < ax && ax < s.Right ? new[] { s.Left, ax, s.Right } : new[] { s.Left, s.Right };
+            int[] ys = s.Top < ay && ay < s.Bottom ? new[] { s.Top, ay, s.Bottom } : new[] { s.Top, s.Bottom };
+            for (int j = 0; j + 1 < ys.Length; j++)
+                for (int i = 0; i + 1 < xs.Length; i++)
+                    yield return Rectangle.FromLTRB(xs[i], ys[j], xs[i + 1], ys[j + 1]);
+        }
+
+        Rectangle AlignOut(Rectangle r, int b) =>
+            Rectangle.FromLTRB(r.Left / b * b, r.Top / b * b, Math.Min(Doc.Width, (r.Right + b - 1) / b * b), Math.Min(Doc.Height, (r.Bottom + b - 1) / b * b));
+
+        void EnsureMip(int k)
+        {
             int mw = (Doc.Width + k - 1) / k, mh = (Doc.Height + k - 1) / k;
             if (_mip == null || _mipK != k || _mipSrc != Doc.Image || _mip.W != mw || _mip.H != mh)
             {
@@ -504,7 +626,6 @@ namespace PaintDark
                     BoxDown(Doc.Image, a, _mip, a.X / k, a.Y / k, k);
                 }
             }
-            return k;
         }
 
         /// <summary>Average k x k blocks of src (rect r, origin aligned to k) into dst at (dx,dy).</summary>
@@ -549,41 +670,20 @@ namespace PaintDark
             }
         }
 
-        void MapToSource(Rectangle vis, out Rectangle src, out Rectangle dst)
+        /// <summary>The picture rect behind view rect vis, widened to whole zoom blocks (plus <paramref name="margin"/> more blocks).</summary>
+        Rectangle VisibleSource(Rectangle vis, int margin)
         {
+            Blocks(out int bi, out int bv);
             int ox = OriginX, oy = OriginY;
-            if (Zoom >= 1)
-            {
-                int z = (int)Math.Round(Zoom);
-                int sx0 = FloorDiv(vis.Left - ox, z), sy0 = FloorDiv(vis.Top - oy, z);
-                int sx1 = CeilDiv(vis.Right - ox, z), sy1 = CeilDiv(vis.Bottom - oy, z);
-                sx0 = Math.Max(0, sx0); sy0 = Math.Max(0, sy0); sx1 = Math.Min(Doc.Width, sx1); sy1 = Math.Min(Doc.Height, sy1);
-                src = Rectangle.FromLTRB(sx0, sy0, sx1, sy1);
-                dst = new Rectangle(ox + sx0 * z, oy + sy0 * z, src.Width * z, src.Height * z);
-            }
-            else
-            {
-                int k = (int)Math.Round(1 / Zoom);
-                int dx0 = vis.Left - ox, dy0 = vis.Top - oy, dx1 = vis.Right - ox, dy1 = vis.Bottom - oy;
-                int sx0 = Math.Max(0, dx0 * k), sy0 = Math.Max(0, dy0 * k);
-                int sx1 = Math.Min(Doc.Width, dx1 * k), sy1 = Math.Min(Doc.Height, dy1 * k);
-                src = Rectangle.FromLTRB(sx0, sy0, sx1, sy1);
-                dst = SourceToView(src);
-            }
+            int x0 = (FloorDiv(vis.Left - ox, bv) - margin) * bi, y0 = (FloorDiv(vis.Top - oy, bv) - margin) * bi;
+            int x1 = (CeilDiv(vis.Right - ox, bv) + margin) * bi, y1 = (CeilDiv(vis.Bottom - oy, bv) + margin) * bi;
+            return Rectangle.FromLTRB(Math.Max(0, x0), Math.Max(0, y0), Math.Min(Doc.Width, x1), Math.Min(Doc.Height, y1));
         }
 
         Rectangle SourceToView(Rectangle s)
         {
             int ox = OriginX, oy = OriginY;
-            if (Zoom >= 1)
-            {
-                int z = (int)Math.Round(Zoom);
-                return new Rectangle(ox + s.X * z, oy + s.Y * z, s.Width * z, s.Height * z);
-            }
-            int k = (int)Math.Round(1 / Zoom);
-            int x0 = s.X / k, y0 = s.Y / k;
-            int x1 = (s.Right + k - 1) / k, y1 = (s.Bottom + k - 1) / k;
-            return Rectangle.FromLTRB(ox + x0, oy + y0, ox + x1, oy + y1);
+            return Rectangle.FromLTRB(ox + Scaled(s.Left), oy + Scaled(s.Top), ox + Scaled(s.Right), oy + Scaled(s.Bottom));
         }
 
         static int FloorDiv(int a, int b) => a >= 0 ? a / b : -((-a + b - 1) / b);
@@ -765,6 +865,7 @@ namespace PaintDark
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
+            _autoFit = false;
             if (!Focused) Focus();
             Popups.CloseAll();
             if (e.Button == MouseButtons.Middle)
@@ -896,6 +997,7 @@ namespace PaintDark
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
+            _autoFit = false;
             Popups.CloseAll();
             if (Native.CtrlDown)
             {
@@ -908,8 +1010,12 @@ namespace PaintDark
             if (Native.ShiftDown || !_vs.Visible) ScrollBy(amount, 0); else ScrollBy(0, amount);
         }
 
+        /// <summary>True while the key being handled is an auto-repeat of a held key (WM_KEYDOWN lParam bit 30).</summary>
+        public bool KeyRepeat { get; private set; }
+
         protected override void WndProc(ref Message m)
         {
+            if (m.Msg == Native.WM_KEYDOWN) KeyRepeat = ((long)m.LParam & 0x40000000) != 0;
             switch (m.Msg)
             {
                 case Native.WM_SETCURSOR:
@@ -942,6 +1048,7 @@ namespace PaintDark
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
+            _autoFit = false;
             if (_resizeMode != 0 && e.KeyCode == Keys.Escape) { _resizeMode = 0; E.SetSelSize(null); Invalidate(); e.Handled = true; return; }
             if (E.ActiveTool.KeyDown(e.KeyData)) { e.Handled = true; _toolDown = E.ActiveTool.InStroke; UpdateCursor(); }
         }

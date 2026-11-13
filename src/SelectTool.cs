@@ -694,7 +694,8 @@ namespace PaintDark
                     {
                         if (_inverted) return true;
                         if (!_lifted) Lift((k & Keys.Control) != 0);
-                        int step = (k & Keys.Shift) != 0 ? 10 : 1;
+                        // a tap moves 1 px (Shift: 10); holding the key moves twice as far per repeat
+                        int step = ((k & Keys.Shift) != 0 ? 10 : 1) * (V != null && V.KeyRepeat ? 2 : 1);
                         int dx = code == Keys.Left ? -step : code == Keys.Right ? step : 0, dy = code == Keys.Up ? -step : code == Keys.Down ? step : 0;
                         var old = _rect;
                         _rect.Offset(dx, dy);

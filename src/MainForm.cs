@@ -648,7 +648,7 @@ namespace PaintDark
         }
 
         /// <summary>Test hook: behave as if a key was pressed in the app.</summary>
-        public void TestKey(Keys k)
+        public void TestKey(Keys k, bool repeat = false)
         {
             var code = k & Keys.KeyCode;
             if (Popups.AnyOpen)
@@ -657,9 +657,10 @@ namespace PaintDark
                 return;
             }
             var target = ActiveControl ?? Canvas;
-            var msg = Message.Create(target.Handle, Native.WM_KEYDOWN, (IntPtr)(int)code, IntPtr.Zero);
+            var lp = repeat ? (IntPtr)0x40000001 : IntPtr.Zero;
+            var msg = Message.Create(target.Handle, Native.WM_KEYDOWN, (IntPtr)(int)code, lp);
             if (ProcessCmdKey(ref msg, k)) return;
-            Native.SendMessage(target.Handle, Native.WM_KEYDOWN, (IntPtr)(int)code, IntPtr.Zero);
+            Native.SendMessage(target.Handle, Native.WM_KEYDOWN, (IntPtr)(int)code, lp);
             Native.SendMessage(target.Handle, Native.WM_KEYUP, (IntPtr)(int)code, (IntPtr)unchecked((int)0xC0000001));
         }
 

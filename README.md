@@ -70,8 +70,9 @@ Once `bin\PaintDark.exe` is ready, the script prompts (`Choice:`):
   - **9 Brushes:** Brush, Calligraphy 1 & 2, Airbrush, Oil, Crayon, Marker, Natural Pencil, and Watercolor with anti-aliased pressure/bristle rendering.
   - **23 Live-Editable Shapes:** Lines, multi-point curves, polygons, rectangles, callouts, arrows, stars, heart, and lightning bolt — all resizable and style-adjustable until committed.
   - **Rich Text Tool:** Contextual **Text** ribbon tab, live font/size preview, Opaque/Transparent background modes, and full bidirectional (RTL / Hebrew) + IME composition support.
-  - **Pixel-Precise Editing:** Rectangular & free-form selection with **Transparent selection**, **Crop**, **Resize and Skew** (percentage or pixels), **Rotate / Flip**, **Invert color**, and **1px Pixel Gridlines + Rulers** up to `800%` zoom.
-- **Fast & Lightweight:** Single ~420 KB native executable built on .NET Framework 4.8 with a 32-bpp ARGB `DIBSection` surface, integer mipmap zoom pyramid, and 50-step delta-compressed Undo/Redo history.
+  - **Pixel-Precise Editing:** Rectangular & free-form selection with **Transparent selection**, **Crop**, **Resize and Skew** (percentage or pixels), **Rotate / Flip**, **Invert color**, and **1px Pixel Gridlines + Rulers** up to `800%` zoom. Pencil, Fill, Color picker and Magnifier cursors mark their exact click point with a crosshair.
+- **Adaptive Zoom:** 25 zoom steps from `10%` to `800%` (`50 → 60 → 70 → 75 → 80 → 90 → 100 → 125 → 150 …`). Opened pictures start at the largest zoom that shows them whole (never above `100%`), and pasting a picture that would be cut off zooms out just enough to show all of it.
+- **Fast & Lightweight:** Single ~420 KB native executable built on .NET Framework 4.8 with a 32-bpp ARGB `DIBSection` surface, integer mipmap zoom pyramid with halftone in-between steps, and 50-step delta-compressed Undo/Redo history.
 
 ---
 
@@ -85,6 +86,7 @@ Once `bin\PaintDark.exe` is ready, the script prompts (`Choice:`):
 | `Ctrl+E` | Image Properties | `Ctrl+Shift+I` | Invert Colors |
 | `Ctrl+R` / `Ctrl+G` | Toggle Rulers / Gridlines | `Ctrl+PageUp` / `Ctrl+PageDown` | Zoom In / Zoom Out |
 | `F11` | Full Screen View | `Ctrl+ Plus` / `Ctrl+ Minus` | Step Tool / Line Width |
+| `Arrow keys` | Nudge selection 1 px (`Shift`: 10 px), hold for 2x speed | `Ctrl+Mouse wheel` | Zoom at the cursor |
 
 ---
 

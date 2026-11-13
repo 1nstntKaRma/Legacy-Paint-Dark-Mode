@@ -655,7 +655,8 @@ namespace PaintDark
                 case Keys.Left: case Keys.Right: case Keys.Up: case Keys.Down:
                     if (_phase != Phase.Pending) return false;
                     {
-                        float dx = code == Keys.Left ? -1 : code == Keys.Right ? 1 : 0, dy = code == Keys.Up ? -1 : code == Keys.Down ? 1 : 0;
+                        float s = V != null && V.KeyRepeat ? 2 : 1;   // held key: twice as far per repeat
+                        float dx = code == Keys.Left ? -s : code == Keys.Right ? s : 0, dy = code == Keys.Up ? -s : code == Keys.Down ? s : 0;
                         _a.X += dx; _a.Y += dy; _b.X += dx; _b.Y += dy; _c1.X += dx; _c1.Y += dy; _c2.X += dx; _c2.Y += dy;
                         for (int i = 0; i < _poly.Count; i++) _poly[i] = new PointF(_poly[i].X + dx, _poly[i].Y + dy);
                         Changed();
