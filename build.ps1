@@ -34,7 +34,7 @@ $InstallMarker = Join-Path $InstallDir 'installed-by-build.ps1.txt'
 try { Get-ChildItem -LiteralPath $root -Recurse -File -ErrorAction SilentlyContinue | Unblock-File -ErrorAction SilentlyContinue } catch {}
 
 # Normalize $Shell aliases
-$ReleaseZipUrl = 'https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest/download/PaintDark-v1.4.zip'
+$ReleaseZipUrl = 'https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest/download/PaintDark-v1.45.zip'
 $RoslynNugetUrl = 'https://www.nuget.org/api/v2/package/Microsoft.Net.Compilers.Toolset/4.11.0'
 $TempRoslynDir = Join-Path $env:TEMP 'RoslynCompiler-4.11.0'
 

@@ -520,7 +520,8 @@ namespace PaintDark
             catch { }
             var asm = typeof(AboutDialog).Assembly.GetName().Version;
             AddLabel("Paint — Dark Mode", 36, 130, 440, 22);
-            AddLabel("Version " + asm.Major + "." + asm.Minor + "." + asm.Build, 36, 152, 440, 20, true);
+            // same form as the release tags: "1.45", with a third part only when it is not zero
+            AddLabel("Version " + asm.Major + "." + asm.Minor + (asm.Build > 0 ? "." + asm.Build : ""), 36, 152, 440, 20, true);
             AddLabel("A dark-themed, feature-for-feature recreation of the classic Windows Paint.", 36, 182, 450, 20);
             AddLabel("Running on " + product + (version.Length > 0 ? ", Version " + version : "") + (build.Length > 0 ? " (OS Build " + build + ")" : ""), 36, 212, 450, 36, true);
             AddLabel("Windows is licensed to:", 36, 256, 440, 20, true);

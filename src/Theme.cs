@@ -232,15 +232,19 @@ namespace PaintDark
         }
 
         /// <summary>Checkerboard used behind transparent pixels and empty color slots.</summary>
-        public static void Checker(Graphics g, Rectangle r, int cell)
+        public static void Checker(Graphics g, Rectangle r, int cell) => Checker(g, r, cell, r.Location);
+
+        /// <summary>Checkerboard over r whose squares line up with <paramref name="origin"/>, so partial repaints match.</summary>
+        public static void Checker(Graphics g, Rectangle r, int cell, Point origin)
         {
             Fill(g, r, Color.FromArgb(0x5A, 0x5A, 0x5A));
             var b = Theme.Brush(Color.FromArgb(0x3A, 0x3A, 0x3A));
             var st = g.Save();
-            g.SetClip(r);
-            for (int y = r.Top; y < r.Bottom; y += cell)
-                for (int x = r.Left + (((y - r.Top) / cell) & 1) * cell; x < r.Right; x += cell * 2)
-                    g.FillRectangle(b, x, y, cell, cell);
+            g.SetClip(r, CombineMode.Intersect);
+            int cx0 = (int)Math.Floor((r.Left - origin.X) / (double)cell), cy0 = (int)Math.Floor((r.Top - origin.Y) / (double)cell);
+            for (int cy = cy0; origin.Y + cy * cell < r.Bottom; cy++)
+                for (int cx = cx0 + ((cx0 + cy) & 1 ^ 1); origin.X + cx * cell < r.Right; cx += 2)
+                    g.FillRectangle(b, origin.X + cx * cell, origin.Y + cy * cell, cell, cell);
             g.Restore(st);
         }
     }

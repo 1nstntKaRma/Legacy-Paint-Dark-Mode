@@ -1,6 +1,6 @@
 # Legacy Paint — Dark Mode
 
-![Version](https://img.shields.io/badge/version-v1.4-blue)
+![Version](https://img.shields.io/badge/version-v1.45-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011-0078D6)
 ![Runtime](https://img.shields.io/badge/.NET%20Framework-4.8-512BD4)
 ![Language](https://img.shields.io/badge/C%23%205-WinForms%20%2B%20GDI-239120)
@@ -54,7 +54,7 @@ Once `bin\PaintDark.exe` is ready, the script prompts (`Choice:`):
 
 ### Option 2 — Download Pre-Built Release
 
-1. Download **`PaintDark-v1.4.zip`** from **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)** and extract it (or download **`PaintDark.exe`** to run standalone with zero setup).
+1. Download **`PaintDark-v1.45.zip`** from **[Releases](https://github.com/1nstntKaRma/Legacy-Paint-Dark-Mode/releases/latest)** and extract it (or download **`PaintDark.exe`** to run standalone with zero setup).
 2. Double-click **`Activate Paint Dark Mode.cmd`** (or run `build.ps1` and choose **`[1] Apply Dark Mode`**) to set Legacy Paint Dark Mode as your default editor for `Right-click -> Edit` @ image files in File Explorer (while hiding *"Edit with Paint 3D"*).
 3. To restore the original Windows Paint at any time, double-click **`Revert to Windows Paint.cmd`** (or choose **`[2] Revert`** in `build.ps1`).
 
@@ -71,8 +71,8 @@ Once `bin\PaintDark.exe` is ready, the script prompts (`Choice:`):
   - **23 Live-Editable Shapes:** Lines, multi-point curves, polygons, rectangles, callouts, arrows, stars, heart, and lightning bolt — all resizable and style-adjustable until committed.
   - **Rich Text Tool:** Contextual **Text** ribbon tab, live font/size preview, Opaque/Transparent background modes, and full bidirectional (RTL / Hebrew) + IME composition support.
   - **Pixel-Precise Editing:** Rectangular & free-form selection with **Transparent selection**, **Crop**, **Resize and Skew** (percentage or pixels), **Rotate / Flip**, **Invert color**, and **1px Pixel Gridlines + Rulers** up to `800%` zoom. Pencil, Fill, Color picker and Magnifier cursors mark their exact click point with a crosshair.
-- **Adaptive Zoom:** 25 zoom steps from `10%` to `800%` (`50 → 60 → 70 → 75 → 80 → 90 → 100 → 125 → 150 …`). Opened pictures start at the largest zoom that shows them whole (never above `100%`), and pasting a picture that would be cut off zooms out just enough to show all of it.
-- **Fast & Lightweight:** Single ~420 KB native executable built on .NET Framework 4.8 with a 32-bpp ARGB `DIBSection` surface, integer mipmap zoom pyramid with halftone in-between steps, and 50-step delta-compressed Undo/Redo history.
+- **Adaptive Zoom:** 25 zoom steps from `10%` to `800%` (`50 → 60 → 70 → 75 → 80 → 90 → 100 → 125 → 150 …`). Opened pictures start at the largest zoom that shows them whole (never above `100%`), and pasting a picture that would be cut off zooms out just enough to show all of it. Zoomed-out pictures, transparent ones included, are smoothly averaged instead of losing pixels.
+- **Fast & Lightweight:** Single ~420 KB native executable built on .NET Framework 4.8 with a 32-bpp ARGB `DIBSection` surface, integer mipmap zoom pyramid (premultiplied for transparency) with exact area-averaged in-between steps, and 50-step delta-compressed Undo/Redo history.
 
 ---
 

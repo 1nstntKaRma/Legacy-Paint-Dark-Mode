@@ -182,8 +182,9 @@ namespace PaintDark
         readonly DarkScroll _hs, _vs;
         Dib _scratch;
         // zoomed-out display cache (box-filtered), updated only where the picture changes
-        Dib _mip, _mipSrc, _ovMip;
+        Dib _mip, _mipSrc, _ovMip, _red, _viewBuf;
         int _mipK;
+        bool _mipPremul;        // the cache holds premultiplied pixels with alpha (transparent pictures)
         Rectangle _mipDirty;
         int _resizeMode; Size _resizeSize; Point _resizeStart;
         bool _panning; Point _panStart; int _panSX, _panSY;
@@ -519,6 +520,7 @@ namespace PaintDark
             bool hasOv = ov.Width > 0 && ov.Height > 0;
 
             IntPtr hdc = g.GetHdc();
+            int saved = 0;
             try
             {
                 Native.SetStretchBltMode(hdc, halftone ? Native.HALFTONE : Native.COLORONCOLOR);
@@ -546,14 +548,76 @@ namespace PaintDark
                         else Blit(hdc, _scratch.DC, ova, ova.Location, 1);
                     }
                 }
+                else if (halftone)
+                {
+                    // transparency zoomed out: average premultiplied pixels (the cached box-filtered copy, then an exact
+                    // area average for what is left) and alpha blend the result 1:1 over the checkerboard
+                    Dib red; Point ro;      // the picture from image point ro on, reduced k times and premultiplied
+                    if (k > 1)
+                    {
+                        EnsureMip(k);
+                        red = _mip; ro = Point.Empty;
+                        if (hasOv)
+                        {
+                            int rw = (src.Width + k - 1) / k, rh = (src.Height + k - 1) / k;
+                            if (_red == null || _red.W < rw || _red.H < rh) { _red?.Dispose(); _red = new Dib(Math.Max(rw, 64), Math.Max(rh, 64)); }
+                            _red.CopyFrom(_mip, new Rectangle(src.X / k, src.Y / k, rw, rh), 0, 0);
+                            var ova = AlignOut(ov, bi);
+                            EnsureScratch(ova.Width, ova.Height);
+                            _scratch.CopyFrom(Doc.Image, ova, 0, 0);
+                            tool.Composite(_scratch, ova);
+                            BoxDown(_scratch, new Rectangle(0, 0, ova.Width, ova.Height), _red, (ova.X - src.X) / k, (ova.Y - src.Y) / k, k, true);
+                            red = _red; ro = src.Location;
+                        }
+                    }
+                    else
+                    {
+                        EnsureScratch(src.Width, src.Height);
+                        _scratch.CopyFrom(Doc.Image, src, 0, 0);
+                        if (hasOv) tool.Composite(_scratch, src);
+                        for (int y = 0; y < src.Height; y++)
+                        {
+                            uint* row = _scratch.Row(y);
+                            for (int x = 0; x < src.Width; x++) row[x] = Px.Premul(row[x]);
+                        }
+                        red = _scratch; ro = src.Location;
+                    }
+                    g.ReleaseHdc(hdc); hdc = IntPtr.Zero;
+                    Draw.Checker(g, SourceToView(src), D.S(8), new Point(OriginX, OriginY));
+                    hdc = g.GetHdc();
+                    // blend only where the checkerboard was just drawn: whole zoom blocks reach past the painted area
+                    saved = Native.SaveDC(hdc);
+                    Native.IntersectClipRect(hdc, vis.Left, vis.Top, vis.Right, vis.Bottom);
+                    Blocks(out _, out int bv);
+                    int mb = bi / k, gr = Gcd(bv, mb);
+                    foreach (var p in Pieces(src))
+                    {
+                        var d = SourceToView(p);
+                        if (d.Width <= 0 || d.Height <= 0) continue;
+                        int sx = (p.X - ro.X) / k, sy = (p.Y - ro.Y) / k;
+                        int sw = (p.Right - ro.X + k - 1) / k - sx, sh = (p.Bottom - ro.Y + k - 1) / k - sy;
+                        Dib from = red;
+                        if (!exact || sw != d.Width || sh != d.Height)
+                        {
+                            if (_viewBuf == null || _viewBuf.W < d.Width || _viewBuf.H < d.Height) { _viewBuf?.Dispose(); _viewBuf = new Dib(Math.Max(d.Width, 64), Math.Max(d.Height, 64)); }
+                            AreaReduce(red, sx, sy, sw, sh, _viewBuf, d.Width, d.Height, bv / gr, mb / gr);
+                            from = _viewBuf; sx = sy = 0;
+                        }
+                        Native.AlphaBlend(hdc, d.X, d.Y, d.Width, d.Height, from.DC, sx, sy, d.Width, d.Height,
+                            new BLENDFUNCTION { BlendOp = 0, SourceConstantAlpha = 255, AlphaFormat = 1 });
+                    }
+                }
                 else
                 {
                     EnsureScratch(src.Width, src.Height);
                     _scratch.CopyFrom(Doc.Image, src, 0, 0);
                     if (hasOv) tool.Composite(_scratch, src);
                     g.ReleaseHdc(hdc); hdc = IntPtr.Zero;
-                    Draw.Checker(g, SourceToView(src), D.S(8));
+                    Draw.Checker(g, SourceToView(src), D.S(8), new Point(OriginX, OriginY));
                     hdc = g.GetHdc();
+                    // blend only where the checkerboard was just drawn: whole zoom blocks reach past the painted area
+                    saved = Native.SaveDC(hdc);
+                    Native.IntersectClipRect(hdc, vis.Left, vis.Top, vis.Right, vis.Bottom);
                     for (int y = 0; y < src.Height; y++)
                     {
                         uint* row = _scratch.Row(y);
@@ -569,7 +633,14 @@ namespace PaintDark
                     }
                 }
             }
-            finally { if (hdc != IntPtr.Zero) g.ReleaseHdc(hdc); }
+            finally
+            {
+                if (hdc != IntPtr.Zero)
+                {
+                    if (saved != 0) Native.RestoreDC(hdc, saved);
+                    g.ReleaseHdc(hdc);
+                }
+            }
         }
 
         /// <summary>
@@ -608,12 +679,13 @@ namespace PaintDark
         void EnsureMip(int k)
         {
             int mw = (Doc.Width + k - 1) / k, mh = (Doc.Height + k - 1) / k;
-            if (_mip == null || _mipK != k || _mipSrc != Doc.Image || _mip.W != mw || _mip.H != mh)
+            bool pm = Doc.HasAlpha;
+            if (_mip == null || _mipK != k || _mipSrc != Doc.Image || _mip.W != mw || _mip.H != mh || _mipPremul != pm)
             {
                 _mip?.Dispose();
                 _mip = new Dib(mw, mh);
-                _mipK = k; _mipSrc = Doc.Image;
-                BoxDown(Doc.Image, Doc.Bounds, _mip, 0, 0, k);
+                _mipK = k; _mipSrc = Doc.Image; _mipPremul = pm;
+                BoxDown(Doc.Image, Doc.Bounds, _mip, 0, 0, k, pm);
                 _mipDirty = Rectangle.Empty;
             }
             else if (!_mipDirty.IsEmpty)
@@ -623,16 +695,19 @@ namespace PaintDark
                 if (d.Width > 0 && d.Height > 0)
                 {
                     var a = Rectangle.FromLTRB(d.X / k * k, d.Y / k * k, Math.Min(Doc.Width, (d.Right + k - 1) / k * k), Math.Min(Doc.Height, (d.Bottom + k - 1) / k * k));
-                    BoxDown(Doc.Image, a, _mip, a.X / k, a.Y / k, k);
+                    BoxDown(Doc.Image, a, _mip, a.X / k, a.Y / k, k, pm);
                 }
             }
         }
 
-        /// <summary>Average k x k blocks of src (rect r, origin aligned to k) into dst at (dx,dy).</summary>
-        static unsafe void BoxDown(Dib src, Rectangle r, Dib dst, int dx, int dy, int k)
+        /// <summary>
+        /// Average k x k blocks of src (rect r, origin aligned to k) into dst at (dx,dy). With <paramref name="premul"/> the
+        /// pixels are premultiplied first and the result keeps its alpha (premultiplied), otherwise it is opaque.
+        /// </summary>
+        static unsafe void BoxDown(Dib src, Rectangle r, Dib dst, int dx, int dy, int k, bool premul = false)
         {
             int ow = (r.Width + k - 1) / k, oh = (r.Height + k - 1) / k;
-            var acc = new int[ow * 3];
+            var acc = new int[ow * 4];
             var cnt = new int[ow];
             for (int oy = 0; oy < oh; oy++)
             {
@@ -644,9 +719,9 @@ namespace PaintDark
                     int w = r.Width;
                     for (int x = 0; x < w; x++)
                     {
-                        uint c = row[x];
+                        uint c = premul ? Px.Premul(row[x]) : row[x];
                         int o = x / k;
-                        acc[o * 3] += (int)((c >> 16) & 255); acc[o * 3 + 1] += (int)((c >> 8) & 255); acc[o * 3 + 2] += (int)(c & 255);
+                        acc[o * 4] += (int)((c >> 16) & 255); acc[o * 4 + 1] += (int)((c >> 8) & 255); acc[o * 4 + 2] += (int)(c & 255); acc[o * 4 + 3] += (int)(c >> 24);
                         cnt[o]++;
                     }
                 }
@@ -656,7 +731,78 @@ namespace PaintDark
                 for (int o = 0; o < lim; o++)
                 {
                     int n = Math.Max(1, cnt[o]);
-                    drow[o] = 0xFF000000u | ((uint)(acc[o * 3] / n) << 16) | ((uint)(acc[o * 3 + 1] / n) << 8) | (uint)(acc[o * 3 + 2] / n);
+                    uint a = premul ? (uint)(acc[o * 4 + 3] / n) << 24 : 0xFF000000u;
+                    drow[o] = a | ((uint)(acc[o * 4] / n) << 16) | ((uint)(acc[o * 4 + 1] / n) << 8) | (uint)(acc[o * 4 + 2] / n);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Area-averages the premultiplied pixels src[sx.., sy..] (sw x sh) into dst (dw x dh at 0,0), shrinking by exactly
+        /// p/q (q/2 &lt; p &lt;= q): every output pixel is the coverage-weighted mean of the up to 3 x 3 source pixels under it.
+        /// </summary>
+        static unsafe void AreaReduce(Dib src, int sx, int sy, int sw, int sh, Dib dst, int dw, int dh, int p, int q)
+        {
+            Taps(sw, dw, p, q, out var xi, out var xw, out var xs);
+            Taps(sh, dh, p, q, out var yi, out var yw, out var ys);
+            // horizontally reduced source rows, kept for the (at most 3 consecutive) rows the current output row needs
+            var rows = new int[3][];
+            var rowOf = new[] { -1, -1, -1 };
+            for (int t = 0; t < 3; t++) rows[t] = new int[dw * 4];
+            for (int j = 0; j < dh; j++)
+            {
+                for (int t = 0; t < 3; t++)
+                {
+                    if (yw[j * 3 + t] == 0) continue;
+                    int i = yi[j * 3 + t];
+                    if (rowOf[i % 3] == i) continue;
+                    rowOf[i % 3] = i;
+                    int[] h = rows[i % 3];
+                    uint* srow = src.Row(sy + i) + sx;
+                    for (int c = 0; c < dw; c++)
+                    {
+                        int a = 0, r = 0, g = 0, b = 0;
+                        for (int u = 0; u < 3; u++)
+                        {
+                            int w = xw[c * 3 + u];
+                            if (w == 0) continue;
+                            uint px = srow[xi[c * 3 + u]];
+                            a += (int)(px >> 24) * w; r += (int)((px >> 16) & 255) * w; g += (int)((px >> 8) & 255) * w; b += (int)(px & 255) * w;
+                        }
+                        h[c * 4] = a; h[c * 4 + 1] = r; h[c * 4 + 2] = g; h[c * 4 + 3] = b;
+                    }
+                }
+                uint* drow = dst.Row(j);
+                for (int c = 0; c < dw; c++)
+                {
+                    int a = 0, r = 0, g = 0, b = 0;
+                    for (int t = 0; t < 3; t++)
+                    {
+                        int w = yw[j * 3 + t];
+                        if (w == 0) continue;
+                        int[] h = rows[yi[j * 3 + t] % 3];
+                        a += h[c * 4] * w; r += h[c * 4 + 1] * w; g += h[c * 4 + 2] * w; b += h[c * 4 + 3] * w;
+                    }
+                    int tot = xs[c] * ys[j];
+                    if (tot == 0) { drow[c] = 0; continue; }
+                    drow[c] = ((uint)((a + tot / 2) / tot) << 24) | ((uint)((r + tot / 2) / tot) << 16) | ((uint)((g + tot / 2) / tot) << 8) | (uint)((b + tot / 2) / tot);
+                }
+            }
+        }
+
+        /// <summary>For each of dn output pixels, the source pixels (of sn, each p units wide) under its q units, and how much.</summary>
+        static void Taps(int sn, int dn, int p, int q, out int[] idx, out int[] wt, out int[] sum)
+        {
+            idx = new int[dn * 3]; wt = new int[dn * 3]; sum = new int[dn];
+            for (int j = 0; j < dn; j++)
+            {
+                long lo = (long)j * q, hi = lo + q;
+                int t = 0;
+                for (int i = (int)(lo / p); i < sn && (long)i * p < hi && t < 3; i++)
+                {
+                    int w = (int)(Math.Min((long)(i + 1) * p, hi) - Math.Max((long)i * p, lo));
+                    if (w <= 0) continue;
+                    idx[j * 3 + t] = i; wt[j * 3 + t] = w; sum[j] += w; t++;
                 }
             }
         }
@@ -1103,7 +1249,7 @@ namespace PaintDark
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _scratch?.Dispose(); _mip?.Dispose(); _ovMip?.Dispose(); _toolTimer.Dispose(); }
+            if (disposing) { _scratch?.Dispose(); _mip?.Dispose(); _ovMip?.Dispose(); _red?.Dispose(); _viewBuf?.Dispose(); _toolTimer.Dispose(); }
             base.Dispose(disposing);
         }
     }
